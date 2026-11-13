@@ -18,4 +18,5 @@
 - 루트: `app.py`(대시보드+스케줄러 진입점), `.env`, `CLAUDE.md`, `requirements.txt`
 - `stock_invest/`: 소스 패키지 (config, kis_client, daytrade, fear_strategy, box 등, `ui.html` 포함)
 - `doc/`: 전략 문서 등 (`CLAUDE.md` 외 md 파일)
+- `service/`: 윈도우 서비스(`NATURE_STOCK`) 등록/제거 스크립트 (관리자 PowerShell 에서 실행)
 - 보조 실행: `python -m stock_invest.check`, `python -m stock_invest.telegram_setup`, `python -m stock_invest.main`(스케줄러만)
