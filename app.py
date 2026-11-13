@@ -18,14 +18,14 @@ from urllib.parse import parse_qs
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-import box as boxmod
-import config
-import daytrade
-import main as core
-import market_data
-import notify
-import state as st
-from kis_client import KIS
+from stock_invest import box as boxmod
+from stock_invest import config
+from stock_invest import daytrade
+from stock_invest import main as core
+from stock_invest import market_data
+from stock_invest import notify
+from stock_invest import state as st
+from stock_invest.kis_client import KIS
 
 PORT = 8765
 LOCK = threading.RLock()  # KIS 호출/잡 실행 직렬화
@@ -167,7 +167,7 @@ def mom_candidates(kis, n=5):
 
 def make_handler(kis, sched, allowed_hosts):
     job_map = {fn.__name__: fn for fn, *_ in core.JOBS}
-    html = (config.BASE_DIR / "ui.html").read_bytes()
+    html = (config.PKG_DIR / "ui.html").read_bytes()
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # 접속 로그 생략

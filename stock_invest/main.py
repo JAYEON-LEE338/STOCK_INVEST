@@ -5,12 +5,12 @@ import sys
 import holidays
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-import config
-import daytrade
-import fear_strategy
-import notify
-import report
-from kis_client import KIS
+from . import config
+from . import daytrade
+from . import fear_strategy
+from . import notify
+from . import report
+from .kis_client import KIS
 
 TZ = "Asia/Seoul"
 KR_HOLIDAYS = holidays.KR()

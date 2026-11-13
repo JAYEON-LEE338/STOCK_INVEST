@@ -157,7 +157,7 @@ function momCards(d){
     <div class="rule"><b>5</b><span>조건 충족 종목 중 <b>거래대금 상위 ${c.pick}종목</b> 시장가 매수</span></div>
     <div class="rule" style="margin-top:6px"><b>PM</b><span>오후 재매수 (14:00~14:50, 10분 간격): 코스피 +${c.pm_index_min}% 이상 & 지수 <b>+${c.trend_pct}% 이상 상승 추세</b>일 때 하루 1회</span></div></div>`);
   out.push(`<div class="card"><h2>② 예산</h2>
-    <div class="row"><span class="muted">모멘텀 예산 비중</span><span>총평가금액의 ${(c.budget_ratio*100).toFixed(0)}% (단타 30% × 50%)</span></div>
+    <div class="row"><span class="muted">모멘텀 예산 비중</span><span>총평가금액의 ${(c.budget_ratio*100).toFixed(0)}% (단타 50% × 50%)</span></div>
     ${!isErr(b)?`<div class="row"><span class="muted">현재 모멘텀 예산</span><span>${won(Math.floor(b.total*c.budget_ratio))}</span></div>`:''}
     <div class="row"><span class="muted">종목당</span><span>예산 ÷ 매수 종목 수</span></div>
     <div class="row"><span class="muted">수익률 계산</span><span>매수가 대비, 왕복 수수료·세금 ${c.cost.toFixed(2)}% 차감</span></div></div>`);

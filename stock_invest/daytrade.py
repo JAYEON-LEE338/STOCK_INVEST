@@ -1,4 +1,4 @@
-"""단타 전략 (계좌의 30%)
+"""단타 전략 (계좌의 50%)
 
 1) 박스권: 코스피가 박스 하단에 가까우면 15:20 종가 매수, 상단 70% 근접부터 25%씩 매도.
 2) 모멘텀: 10시 기준 코스피 +1% 이상 & 주도 섹터 & 지수 하락 추세 아님이면 매수,
@@ -7,11 +7,11 @@
 import datetime as dt
 import logging
 
-import box as boxmod
-import config
-import notify
-import state as st
-from kis_client import KIS, tick_size
+from . import box as boxmod
+from . import config
+from . import notify
+from . import state as st
+from .kis_client import KIS, tick_size
 
 log = logging.getLogger("daytrade")
 

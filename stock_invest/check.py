@@ -1,9 +1,9 @@
 """연결 점검: 읽기 전용 API만 호출한다 (주문 없음)."""
 import logging
 
-import config
-import market_data
-from kis_client import KIS
+from . import config
+from . import market_data
+from .kis_client import KIS
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 

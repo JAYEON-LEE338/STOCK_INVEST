@@ -1,11 +1,11 @@
-"""공포지수 전략 (계좌의 70%): VIX 급등 시 커버드콜 ETF 분할 매수, VIX 안정 시 10%씩 분할 매도."""
+"""공포지수 전략 (계좌의 50%): VIX 급등 시 커버드콜 ETF 분할 매수, VIX 안정 시 10%씩 분할 매도."""
 import datetime as dt
 import logging
 
-import config
-import market_data
-import state as st
-from kis_client import KIS
+from . import config
+from . import market_data
+from . import state as st
+from .kis_client import KIS
 
 log = logging.getLogger("fear")
 

@@ -3,8 +3,8 @@ import datetime as dt
 import logging
 import time
 
-import config
-import state as st
+from . import config
+from . import state as st
 
 log = logging.getLogger("box")
 _cache = {"t": 0.0, "v": None}

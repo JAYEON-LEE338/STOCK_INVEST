@@ -5,8 +5,8 @@ import time
 
 import requests
 
-import config
-import notify
+from . import config
+from . import notify
 
 log = logging.getLogger("kis")
 

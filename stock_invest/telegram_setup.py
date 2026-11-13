@@ -1,11 +1,11 @@
 """텔레그램 설정 도우미.
 1) @BotFather 에서 봇을 만들고 토큰을 .env 의 TELEGRAM_BOT_TOKEN 에 넣는다.
 2) 만든 봇에게 텔레그램에서 아무 메시지나 보낸다.
-3) python telegram_setup.py  -> chat_id 를 찾아 출력하고 테스트 메시지를 보낸다.
+3) python -m stock_invest.telegram_setup  -> chat_id 를 찾아 출력하고 테스트 메시지를 보낸다.
 """
 import requests
 
-import config
+from . import config
 
 if not config.TELEGRAM_BOT_TOKEN:
     raise SystemExit(".env 에 TELEGRAM_BOT_TOKEN 을 먼저 입력하세요.")

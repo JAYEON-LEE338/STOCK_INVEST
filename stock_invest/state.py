@@ -1,6 +1,6 @@
 import json
 
-import config
+from . import config
 
 _DEFAULT = {
     "box_positions": {},  # {code: {qty, peak_qty, sold_steps, date}} 박스권 전략 보유
