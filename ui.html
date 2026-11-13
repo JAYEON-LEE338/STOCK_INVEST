@@ -57,7 +57,7 @@ pre{margin:0;max-height:300px;overflow:auto;font:12px/1.5 Consolas,monospace;whi
 <header>
   <h1>STOCK_INVEST</h1>
   <div class="badges" id="badges"></div>
-  <div><span class="muted" id="now"></span> <button class="ghost" id="refresh">새로고침</button> <a href="/logout" class="muted" style="font-size:12px">로그아웃</a></div>
+  <div><span class="muted" id="now"></span> <button class="ghost" id="refresh">새로고침</button> <button class="ghost" id="pwBtn">비밀번호 변경</button> <a href="/logout" class="muted" style="font-size:12px">로그아웃</a></div>
 </header>
 <div class="tabs"><button class="tab" data-tab="main">대시보드</button><button class="tab" data-tab="mom">모멘텀 조건</button></div>
 <div class="grid" id="grid"><div class="card">불러오는 중…</div></div>
@@ -115,6 +115,7 @@ function sigCard(title, sig, extra){
 let TAB = 'main';
 try { TAB = localStorage.getItem('tab') === 'mom' ? 'mom' : 'main'; } catch(e) {}
 
+const trendTxt = t => !t || t.trend==='unknown' ? '<span class="muted">기록 부족 (판단 보류)</span>' : `${pct(t.pct)} <span class="badge ${t.trend==='up'?'b-ok':t.trend==='down'?'b-bad':'b-warn'}">${{up:'상승',down:'하락 — 매수 제외',flat:'보합'}[t.trend]}</span>`;
 let CAND = {t: 0, data: null, loading: false};
 function candHtml(d){
   const c = CAND.data;
@@ -127,6 +128,7 @@ function candHtml(d){
     <td>${ok(i.c_sector)} 주도섹터 ${ok(i.c_up)} 상승 ${ok(i.c_hot)} 과열아님</td></tr>`).join('');
   return `<div class="row"><span class="muted">주도 섹터</span><span><b>${esc(c.lead)}</b> (${Object.entries(c.sector_avg).map(([k,v])=>esc(k)+' '+(v>0?'+':'')+v+'%').join(' / ')})</span></div>
     <div class="row"><span class="muted">코스피 조건 (≥ +${d.mom_cfg.index_min}%)</span><span>${typeof c.index_pct==='number'?pct(c.index_pct):'-'} <span class="badge ${idxOk?'b-ok':'b-warn'}">${idxOk?'충족':'미달 — 종목이 맞아도 매수 안 함'}</span></span></div>
+    <div class="row"><span class="muted">지수 추세 (최근 ${d.mom_cfg.trend_min}분)</span><span>${trendTxt(c.trend)}</span></div>
     <div class="tblwrap"><table><tr><th></th><th>종목</th><th>섹터</th><th class="n">현재가</th><th class="n">등락률</th><th class="n">거래대금(원)</th><th>종목 조건</th></tr>${rows}</table></div>`;
 }
 async function loadCand(d){
@@ -143,6 +145,7 @@ async function loadCand(d){
 function momCards(d){
   const c = d.mom_cfg, b = d.balance, out = [];
   const kospiOk = typeof d.kospi === 'number';
+  out.push(`<div class="card wide" id="candCard"><h2>선정 조건 근접 종목 TOP 5 (거래대금 순위 기준)</h2>${candHtml(d)}</div>`);
   const kOk = kospiOk && d.kospi >= c.index_min;
   const sg = (d.signals || {}).momentum || {};
   out.push(`<div class="card"><h2>① 매수 조건 (10:01, 모두 충족)</h2>
@@ -150,8 +153,9 @@ function momCards(d){
       ${kospiOk?` · 현재 ${pct(d.kospi)} <span class="badge ${kOk?'b-ok':'b-warn'}">${kOk?'충족':'미달'}</span>`:''}</span></div>
     <div class="rule"><b>2</b><span>종목이 <b>당일 주도 섹터</b> 소속 (섹터 내 등락률 평균 1위)이고 <b>등락률 > 0</b></span></div>
     <div class="rule"><b>3</b><span>과열(등락률 <b>${c.max_change}% 이상</b>) 종목 제외</span></div>
-    <div class="rule"><b>4</b><span>조건 충족 종목 중 <b>거래대금 상위 ${c.pick}종목</b> 시장가 매수</span></div>
-    <div class="muted" style="margin-top:6px">거래량 조건은 사용하지 않음</div></div>`);
+    <div class="rule"><b>4</b><span>지수 추세: 최근 ${c.trend_min}분 <b>-${c.trend_pct}% 이하 하락 추세면 매수 제외</b></span></div>
+    <div class="rule"><b>5</b><span>조건 충족 종목 중 <b>거래대금 상위 ${c.pick}종목</b> 시장가 매수</span></div>
+    <div class="rule" style="margin-top:6px"><b>PM</b><span>오후 재매수 (14:00~14:50, 10분 간격): 코스피 +${c.pm_index_min}% 이상 & 지수 <b>+${c.trend_pct}% 이상 상승 추세</b>일 때 하루 1회</span></div></div>`);
   out.push(`<div class="card"><h2>② 예산</h2>
     <div class="row"><span class="muted">모멘텀 예산 비중</span><span>총평가금액의 ${(c.budget_ratio*100).toFixed(0)}% (단타 30% × 50%)</span></div>
     ${!isErr(b)?`<div class="row"><span class="muted">현재 모멘텀 예산</span><span>${won(Math.floor(b.total*c.budget_ratio))}</span></div>`:''}
@@ -167,7 +171,6 @@ function momCards(d){
     <div class="rule"><b>19:30</b><span>NXT 애프터마켓 지정가 (현재가 -${c.nxt_ticks}틱) 매도. 실패 시 텔레그램 알림</span></div>
     <div class="rule"><b>09:05</b><span>다음 영업일 정규장 시장가로 잔여 정리</span></div></div>`);
 
-  out.push(`<div class="card wide" id="candCard"><h2>선정 조건 근접 종목 TOP 5 (거래대금 순위 기준)</h2>${candHtml(d)}</div>`);
 
   const mp = d.mom_positions || {};
   const held = isErr(b) ? {} : b.holdings;
@@ -317,6 +320,16 @@ async function load(force){
   } finally { busy = false; }
 }
 $('#refresh').onclick = () => load(true);
+$('#pwBtn').onclick = async () => {
+  const cur = prompt('현재 비밀번호를 입력하세요');
+  if (cur === null) return;
+  const nw = prompt('새 비밀번호 (4자 이상)');
+  if (nw === null) return;
+  if (nw !== prompt('새 비밀번호를 한 번 더 입력하세요')) { alert('두 번 입력한 값이 다릅니다'); return; }
+  const r = await fetch('/api/password', {method:'POST', headers:{'X-Requested-With':'dashboard','Content-Type':'application/json'}, body:JSON.stringify({current:cur, new:nw})});
+  const j = await r.json();
+  alert(j.error ? j.error : '비밀번호가 변경되었습니다');
+};
 load(); setInterval(load, 15000);
 </script>
 </body>

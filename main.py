@@ -20,6 +20,7 @@ JOBS = [
     (daytrade.sell_fallback, "전일 모멘텀 잔여 정리", 9, 5),
     (report.daily_status, "10시 현황 알림", 10, 0),
     (daytrade.momentum_buy, "모멘텀 매수 (10시 기준)", 10, 1),
+    (daytrade.momentum_buy_pm, "모멘텀 오후 재매수 (14:00~14:50, 10분 간격)", 14, 0),
     (daytrade.box_sell, "박스권 상단 분할 매도", 15, 0),
     (fear_strategy.run, "VIX 공포지수 매매", 15, 10),
     (daytrade.box_buy, "박스권 하단 종가 매수", 15, 20),
@@ -60,9 +61,11 @@ def build_scheduler(kis, sched_cls=BlockingScheduler, lock=None):
     for fn, _label, h, m in JOBS:
         sched.add_job(guarded(fn, kis, lock), "cron", day_of_week="mon-fri", hour=h, minute=m,
                       misfire_grace_time=120, id=fn.__name__)
+    sched.add_job(guarded(daytrade.momentum_buy_pm, kis, lock), "cron", day_of_week="mon-fri", hour=14,
+                  minute="10,20,30,40,50", misfire_grace_time=120, id="momentum_buy_pm_more")
     # 모멘텀 손절/익절 감시: 매 분 (함수 내부에서 10:02~15:19 만 동작)
     sched.add_job(guarded(daytrade.momentum_monitor, kis, lock), "cron", day_of_week="mon-fri",
-                  hour="10-15", minute="*", misfire_grace_time=30, id="momentum_monitor")
+                  hour="9-15", minute="*", misfire_grace_time=30, id="momentum_monitor")
     return sched
 
 

@@ -5,3 +5,4 @@ logs/
 __pycache__/
 .venv/
 state_live.json
+.dashboard_pw.json

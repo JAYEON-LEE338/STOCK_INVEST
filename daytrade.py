@@ -1,8 +1,8 @@
 """단타 전략 (계좌의 30%)
 
 1) 박스권: 코스피가 박스 하단에 가까우면 15:20 종가 매수, 상단 70% 근접부터 25%씩 매도.
-2) 모멘텀: 10시 기준 코스피 +1% 이상 & 주도 섹터이면 매수, 장중 손절/익절 감시,
-   잔량은 당일 19:30 NXT 에서 매도.
+2) 모멘텀: 10시 기준 코스피 +1% 이상 & 주도 섹터 & 지수 하락 추세 아님이면 매수,
+   14~15시 지수가 다시 상승 추세면 재매수, 장중 손절/익절 감시, 잔량은 당일 19:30 NXT 에서 매도.
 """
 import datetime as dt
 import logging
@@ -122,33 +122,74 @@ def box_sell(kis: KIS) -> None:
 
 
 # ---------------------------------------------------------------- 모멘텀
-def momentum_buy(kis: KIS) -> None:
-    """10:01 - 코스피 +1% & 주도 섹터 종목 중 거래대금 상위를 매수."""
+# 지수 추세: 매 분 코스피를 기록해 최근 N분 변화율로 판단 (메모리, 재시작 시 초기화)
+_IDX = {"date": "", "s": []}
+
+
+def record_index(kis: KIS) -> None:
+    now = dt.datetime.now()
+    if _IDX["date"] != _today():
+        _IDX["date"], _IDX["s"] = _today(), []
+    _IDX["s"].append((now, kis.index_price("0001")["price"]))
+    del _IDX["s"][:-400]
+
+
+def index_trend() -> dict:
+    """최근 MOM_TREND_MIN 분 코스피 변화율(%)과 추세. 기록 부족하면 trend='unknown'."""
+    s = _IDX["s"] if _IDX["date"] == _today() else []
+    if len(s) < 2:
+        return {"trend": "unknown", "pct": None}
+    now_t, now_v = s[-1]
+    past = [x for x in s if x[0] <= now_t - dt.timedelta(minutes=config.MOM_TREND_MIN)]
+    if not past:
+        return {"trend": "unknown", "pct": None}
+    pct = (now_v / past[-1][1] - 1) * 100
+    tr = "down" if pct <= -config.MOM_TREND_PCT else "up" if pct >= config.MOM_TREND_PCT else "flat"
+    return {"trend": tr, "pct": round(pct, 2)}
+
+
+def _momentum_entry(kis: KIS, kind: str) -> bool:
+    """kind: 'am'(10:01) / 'pm'(14:00~14:50 재매수). 매수가 이뤄졌으면 True."""
+    pm = kind == "pm"
+    sig_key = "momentum_pm" if pm else "momentum"
     idx = kis.index_price("0001")["change_pct"]
-    sig = {"date": _today(), "index_pct": idx, "items": [], "result": ""}
-    if idx < config.MOM_INDEX_MIN:
-        sig["result"] = f"코스피 {idx:+.2f}% (기준 +{config.MOM_INDEX_MIN}% 미달) - 쉼"
-        log.info("모멘텀 판단: %s", sig["result"])
-        return _save_signal("momentum", sig)
+    tr = index_trend()
+    sig = {"date": _today(), "time": dt.datetime.now().strftime("%H:%M"), "index_pct": idx,
+           "trend": tr, "items": [], "result": ""}
+    need = config.MOM_PM_INDEX_MIN if pm else config.MOM_INDEX_MIN
+
+    def done(msg, bought=False):
+        sig["result"] = msg
+        log.info("모멘텀(%s) 판단: %s", kind, msg)
+        _save_signal(sig_key, sig)
+        return bought
+
+    if idx < need:
+        return done(f"코스피 {idx:+.2f}% (기준 +{need}% 미달) - 쉼")
+    if pm and tr["trend"] != "up":
+        return done(f"지수 상승 추세 아님 ({tr['trend']}, {tr['pct']}%) - 재매수 안 함")
+    if not pm and tr["trend"] == "down":
+        return done(f"지수 하락 추세 ({tr['pct']}%) - 매수 대상 제외")
 
     data = _sector_rows(kis)
     if not data:
-        sig["result"] = "시세 조회 실패"
-        return _save_signal("momentum", sig)
+        return done("시세 조회 실패")
     lead = _lead_sector(data)
     sig["sector"] = lead
 
+    s = st.load()
     cands = [r for r in data[lead] if 0 < r["change_pct"] < config.MAX_CHANGE_PCT]
     cands.sort(key=lambda r: r["value"], reverse=True)
     picks = cands[: config.PICK_COUNT]
     if not picks:
-        sig["result"] = f"주도 섹터({lead})에 상승 중인 종목 없음"
-        log.info("모멘텀 판단: %s", sig["result"])
-        return _save_signal("momentum", sig)
+        return done(f"주도 섹터({lead})에 매수할 상승 종목 없음")
 
-    s = st.load()
     bal = kis.balance()
-    budget = min(bal["total"] * config.DAY_RATIO * config.DAY_SPLIT_MOM, bal["cash"])
+    held_val = sum(p["qty"] * bal["holdings"].get(c, {}).get("price", 0)
+                   for c, p in s["mom_positions"].items() if p.get("date") == _today())
+    budget = min(bal["total"] * config.DAY_RATIO * config.DAY_SPLIT_MOM - held_val, bal["cash"])
+    if budget <= 0:
+        return done("모멘텀 예산 여유 없음")
     per = budget / len(picks)
     n_bought = 0
     for r in picks:
@@ -156,27 +197,43 @@ def momentum_buy(kis: KIS) -> None:
         if qty > 0 and kis.order("buy", r["code"], qty):
             pos = s["mom_positions"].get(r["code"])
             if pos and pos.get("date") == _today():
-                # 같은 날 추가 매수: 평균 매수가 갱신
                 tot = pos["qty"] + qty
                 pos["entry"] = (pos["entry"] * pos["qty"] + r["price"] * qty) / tot
                 pos["base_qty"] += qty
                 pos["qty"] = tot
             else:
-                pos = {"qty": qty, "base_qty": qty, "entry": r["price"], "date": _today(),
-                       "sold_order": False, "steps": [], "was_neg": False}
-                s["mom_positions"][r["code"]] = pos
+                s["mom_positions"][r["code"]] = {"qty": qty, "base_qty": qty, "entry": r["price"], "date": _today(),
+                                                 "sold_order": False, "steps": [], "was_neg": False}
             sig["items"].append({"code": r["code"], "name": r["name"], "price": r["price"],
                                  "change_pct": r["change_pct"], "qty": qty})
             n_bought += 1
     st.save(s)
-    sig["result"] = f"{lead} 주도 - {n_bought}종목 매수"
-    log.info("모멘텀 판단: %s", sig["result"])
-    _save_signal("momentum", sig)
+    return done(f"{lead} 주도 - {n_bought}종목 매수" + (" (오후 재매수)" if pm else ""), n_bought > 0)
+
+
+def momentum_buy(kis: KIS) -> None:
+    """10:01 - 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님이면 거래대금 상위 매수."""
+    _momentum_entry(kis, "am")
+
+
+def momentum_buy_pm(kis: KIS) -> None:
+    """14:00~14:50 (10분 간격) - 지수가 다시 상승 추세면 하루 1회 재매수."""
+    now = dt.datetime.now().time()
+    if not (dt.time(14, 0) <= now < dt.time(15, 0)):
+        return
+    if (st.load()["signals"].get("momentum_pm") or {}).get("items") and             st.load()["signals"]["momentum_pm"].get("date") == _today():
+        return  # 오늘 오후 매수 완료
+    _momentum_entry(kis, "pm")
 
 
 def momentum_monitor(kis: KIS) -> None:
     """10:02~15:19 - 모멘텀 보유 종목 손절/본전/익절 감시 (1분 간격)."""
     now = dt.datetime.now().time()
+    if dt.time(9, 0) <= now < dt.time(15, 20):
+        try:
+            record_index(kis)
+        except Exception as e:
+            log.warning("지수 기록 실패: %s", e)
     if not (dt.time(10, 2) <= now < dt.time(15, 20)):
         return
     s = st.load()

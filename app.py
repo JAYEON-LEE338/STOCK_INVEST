@@ -5,6 +5,7 @@
 - 로그인 5회 실패 시 해당 IP 5분 차단 + 텔레그램 알림.
 """
 import datetime as dt
+import hashlib
 import hmac
 import json
 import logging
@@ -46,6 +47,32 @@ button{padding:10px;border:0;border-radius:8px;background:var(--accent);color:#f
 <body><form method="post" action="/login"><h1>STOCK_INVEST</h1>
 <input type="password" name="password" placeholder="비밀번호" autofocus required>
 <button>로그인</button><div class="err">{{ERR}}</div></form></body></html>"""
+
+
+PW_FILE = config.BASE_DIR / ".dashboard_pw.json"  # 대시보드에서 바꾼 비밀번호(해시). 있으면 .env 값보다 우선
+
+
+def _hash_pw(pw: str, salt: bytes) -> str:
+    return hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 200_000).hex()
+
+
+def pw_configured() -> bool:
+    return PW_FILE.exists() or bool(config.DASHBOARD_PASSWORD)
+
+
+def check_pw(pw: str) -> bool:
+    if PW_FILE.exists():
+        try:
+            d = json.loads(PW_FILE.read_text())
+            return hmac.compare_digest(_hash_pw(pw, bytes.fromhex(d["salt"])), d["hash"])
+        except Exception:
+            return False
+    return bool(config.DASHBOARD_PASSWORD) and hmac.compare_digest(pw.encode(), config.DASHBOARD_PASSWORD.encode())
+
+
+def set_pw(pw: str) -> None:
+    salt = secrets.token_bytes(16)
+    PW_FILE.write_text(json.dumps({"salt": salt.hex(), "hash": _hash_pw(pw, salt)}))
 
 
 def safe(fn):
@@ -90,7 +117,8 @@ def collect(kis, sched):
         "stop_pct": config.MOM_STOP_PCT, "stop_ratio": config.MOM_STOP_RATIO,
         "stop2_wait": config.MOM_STOP2_WAIT_MIN, "stop2_ratio": config.MOM_STOP2_RATIO,
         "be_ratio": config.MOM_BREAKEVEN_RATIO, "tp": config.MOM_TAKE_PROFIT,
-        "nxt_ticks": config.SELL_TICKS_BELOW,
+        "nxt_ticks": config.SELL_TICKS_BELOW, "trend_min": config.MOM_TREND_MIN,
+        "trend_pct": config.MOM_TREND_PCT, "pm_index_min": config.MOM_PM_INDEX_MIN,
     }
     d["signals"] = s.get("signals", {})
     d["box_positions"] = s.get("box_positions", {})
@@ -129,10 +157,12 @@ def mom_candidates(kis, n=5):
     # 충족 조건 수 -> 주도 섹터 우선 -> 거래대금 순
     out.sort(key=lambda x: (x["met"], x["c_sector"], x["value"]), reverse=True)
     top = out[:n]
+    trend = daytrade.index_trend()
     for i, x in enumerate(top):
-        x["pick"] = x["met"] == 3 and sum(1 for y in top[:i] if y["met"] == 3) < config.PICK_COUNT
+        x["pick"] = (x["met"] == 3 and trend["trend"] != "down"
+                     and sum(1 for y in top[:i] if y["met"] == 3) < config.PICK_COUNT)
     return {"lead": lead, "sector_avg": {k: round(v, 2) for k, v in avg.items()},
-            "index_pct": safe(lambda: kis.index_change("0001")), "items": top}
+            "index_pct": safe(lambda: kis.index_change("0001")), "trend": trend, "items": top}
 
 
 def make_handler(kis, sched, allowed_hosts):
@@ -154,7 +184,7 @@ def make_handler(kis, sched, allowed_hosts):
         def _authed(self):
             if self._local():
                 return True
-            if not config.DASHBOARD_PASSWORD:
+            if not pw_configured():
                 return False
             tok = SimpleCookie(self.headers.get("Cookie") or "").get("sid")
             exp = SESSIONS.get(tok.value) if tok else None
@@ -186,7 +216,7 @@ def make_handler(kis, sched, allowed_hosts):
                 return self._login_page(429, "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.")
             n = min(int(self.headers.get("Content-Length") or 0), 2048)
             pw = parse_qs(self.rfile.read(n).decode("utf-8", "replace")).get("password", [""])[0]
-            if config.DASHBOARD_PASSWORD and hmac.compare_digest(pw.encode(), config.DASHBOARD_PASSWORD.encode()):
+            if check_pw(pw):
                 FAILS.pop(ip, None)
                 now = time.time()
                 for k in [k for k, v in SESSIONS.items() if v < now]:
@@ -280,6 +310,31 @@ def make_handler(kis, sched, allowed_hosts):
                 except Exception as e:
                     return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
 
+            if self.path == "/api/password":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    req = json.loads(self.rfile.read(min(n, 2048)) or b"{}")
+                    cur, new = str(req.get("current", "")), str(req.get("new", ""))
+                    ip = self.client_address[0]
+                    n_fail, until = FAILS.get(ip, [0, 0])
+                    if until > time.time():
+                        raise ValueError("시도가 너무 많습니다. 잠시 후 다시 시도하세요")
+                    if pw_configured() and not check_pw(cur):
+                        FAILS[ip] = [n_fail + 1, time.time() + 300 if n_fail + 1 >= 5 else 0]
+                        time.sleep(1)
+                        raise ValueError("현재 비밀번호가 올바르지 않습니다")
+                    if len(new) < 4:
+                        raise ValueError("새 비밀번호는 4자 이상이어야 합니다")
+                    set_pw(new)
+                    keep = SimpleCookie(self.headers.get("Cookie") or "").get("sid")
+                    for k in [k for k in SESSIONS if not keep or k != keep.value]:
+                        del SESSIONS[k]  # 다른 접속은 로그아웃
+                    log.warning("대시보드 비밀번호 변경: %s", ip)
+                    notify.send("🔑 대시보드 비밀번호가 변경되었습니다")
+                    return self._send(200, b'{"ok":true}')
+                except Exception as e:
+                    return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
+
             if self.path == "/api/mode":
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
@@ -345,7 +400,7 @@ def main():
     handler = make_handler(kis, sched, set(hosts) | {"127.0.0.1", "localhost"})
     servers = []
     for h in hosts:
-        if h not in ("127.0.0.1", "localhost") and not config.DASHBOARD_PASSWORD:
+        if h not in ("127.0.0.1", "localhost") and not pw_configured():
             log.warning("DASHBOARD_PASSWORD 가 없어 %s 로는 열지 않습니다", h)
             continue
         try:

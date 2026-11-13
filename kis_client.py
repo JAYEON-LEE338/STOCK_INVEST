@@ -104,7 +104,7 @@ class KIS:
         o = j["output"]
         return {
             "code": code,
-            "name": o.get("hts_kor_isnm", ""),
+            "name": o.get("hts_kor_isnm") or config.STOCK_NAMES.get(code, code),
             "price": int(o["stck_prpr"]),
             "change_pct": float(o["prdy_ctrt"]),
             "value": int(o.get("acml_tr_pbmn") or 0),
