@@ -24,6 +24,7 @@ from stock_invest import daytrade
 from stock_invest import main as core
 from stock_invest import market_data
 from stock_invest import notify
+from stock_invest import scalp
 from stock_invest import state as st
 from stock_invest.kis_client import KIS
 
@@ -97,7 +98,7 @@ def collect(kis, sched):
     d = {
         "now": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "mode": config.MODE, "dry_run": config.DRY_RUN,
-        "day_ratio": config.DAY_RATIO, "fear_ratio": config.FEAR_RATIO,
+        "be_arm": config.BE_ARM_PCT, "day_ratio": config.DAY_RATIO, "fear_ratio": config.FEAR_RATIO, "scalp_ratio": config.SCALP_RATIO,
         "vix_buy": config.VIX_BUY_MIN, "vix_sell_ladder": config.VIX_SELL_LADDER,
         "covered_call_code": config.COVERED_CALL_CODE,
     }
@@ -105,9 +106,12 @@ def collect(kis, sched):
         bal = safe(kis.balance)
         d["balance"] = bal
         if "error" not in bal:
-            d["budgets"] = {"day": int(bal["total"] * config.DAY_RATIO), "fear": int(bal["total"] * config.FEAR_RATIO)}
+            d["budgets"] = {"day": int(bal["total"] * config.DAY_RATIO), "scalp": int(bal["total"] * config.SCALP_RATIO),
+                            "fear": int(bal["total"] * config.FEAR_RATIO)}
         d["vix"] = safe(market_data.vix)
         d["kospi"] = safe(lambda: kis.index_change("0001"))
+        d["indices"] = {"코스피": safe(lambda: kis.index_price("0001")), "코스닥": safe(lambda: kis.index_price("1001"))}
+        d["us_indices"] = safe(market_data.us_indices)
         d["cc"] = safe(lambda: kis.price(config.COVERED_CALL_CODE)) if config.COVERED_CALL_CODE else None
         d["box"] = safe(lambda: boxmod.get(kis))
     d["mom_cfg"] = {
@@ -120,6 +124,23 @@ def collect(kis, sched):
         "nxt_ticks": config.SELL_TICKS_BELOW, "trend_min": config.MOM_TREND_MIN,
         "trend_pct": config.MOM_TREND_PCT, "pm_index_min": config.MOM_PM_INDEX_MIN,
     }
+    d["alloc"] = {"fear": config.FEAR_RATIO, "scalp": config.SCALP_RATIO,
+                  "box": config.DAY_RATIO * config.DAY_SPLIT_BOX, "mom": config.DAY_RATIO * config.DAY_SPLIT_MOM}
+    d["box_cfg"] = {"stop": config.BOX_STOP_PCT, "sell_ratio": config.BOX_SELL_RATIO, "ladder": config.BOX_SELL_LADDER,
+                    "min_width": config.BOX_MIN_WIDTH, "pick": config.PICK_COUNT}
+    d["fear_cfg"] = {"tranche": config.BUY_TRANCHE, "step_ratio": config.SELL_STEP_RATIO}
+    d["names"] = config.STOCK_NAMES
+    d["scalp_cfg"] = {
+        "ratio": config.SCALP_RATIO, "min_change": config.SCALP_MIN_CHANGE, "vol_rate": config.SCALP_VOL_RATE,
+        "require_mom": config.SCALP_REQUIRE_MOMENTUM, "index_min": config.MOM_INDEX_MIN,
+        "stop": config.SCALP_STOP_PCT, "be_ratio": config.SCALP_BREAKEVEN_RATIO,
+        "tp": config.SCALP_TAKE_PROFIT, "loss_min": config.SCALP_LOSS_ALERT_MIN,
+        "cost": config.MOM_ROUNDTRIP_COST * 100, "pick": config.PICK_COUNT,
+        "max_buys": config.SCALP_MAX_BUYS,
+    }
+    d["scalp_positions"] = s.get("scalp_positions", {})
+    sd = s.get("scalp_done") or {}
+    d["scalp_done"] = sd.get("codes", []) if sd.get("date") == dt.date.today().isoformat() else []
     d["signals"] = s.get("signals", {})
     d["box_positions"] = s.get("box_positions", {})
     d["mom_positions"] = s.get("mom_positions", {})
@@ -135,13 +156,14 @@ def collect(kis, sched):
 
 
 MOM_CAND = {"t": 0.0, "data": None}
+SCALP_CAND = {"t": 0.0, "data": None}
 
 
 def mom_candidates(kis, n=5):
     """모멘텀 선정 조건에 가까운 종목 상위 n개. 조건: 주도 섹터 / 상승 중 / 과열 아님, 순위는 거래대금."""
     data = daytrade._sector_rows(kis)
     if not data:
-        return {"error": "시세 조회 실패"}
+        return {"error": "대상 종목 없음 (시총 조건 미충족 또는 시세 조회 실패)"}
     avg = {s: sum(r["change_pct"] for r in rows) / len(rows) for s, rows in data.items()}
     lead = max(avg, key=avg.get)
     out = []
@@ -157,7 +179,7 @@ def mom_candidates(kis, n=5):
     # 충족 조건 수 -> 주도 섹터 우선 -> 거래대금 순
     out.sort(key=lambda x: (x["met"], x["c_sector"], x["value"]), reverse=True)
     top = out[:n]
-    trend = daytrade.index_trend()
+    trend = daytrade.index_trend(kis)
     for i, x in enumerate(top):
         x["pick"] = (x["met"] == 3 and trend["trend"] != "down"
                      and sum(1 for y in top[:i] if y["met"] == 3) < config.PICK_COUNT)
@@ -264,6 +286,12 @@ def make_handler(kis, sched, allowed_hosts):
                         MOM_CAND["data"] = safe(lambda: mom_candidates(kis))
                     MOM_CAND["t"] = time.time()
                 return self._send(200, json.dumps(MOM_CAND["data"], ensure_ascii=False).encode())
+            if path == "/api/scalp_candidates":
+                if time.time() - SCALP_CAND["t"] > 30 or SCALP_CAND["data"] is None:
+                    with LOCK:
+                        SCALP_CAND["data"] = safe(lambda: scalp.candidates(kis))
+                    SCALP_CAND["t"] = time.time()
+                return self._send(200, json.dumps(SCALP_CAND["data"], ensure_ascii=False).encode())
             self._send(404, b"not found", "text/plain")
 
         # ---------- POST ----------

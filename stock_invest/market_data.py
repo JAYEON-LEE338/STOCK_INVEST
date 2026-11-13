@@ -1,4 +1,5 @@
 import logging
+import time
 
 import requests
 
@@ -27,3 +28,25 @@ def vix() -> float | None:
     except Exception as e:
         log.warning("VIX 조회 실패: %s", e)
         return None
+
+
+US_INDICES = {"S&P 500": "^GSPC", "다우": "^DJI", "나스닥": "^IXIC"}
+_US = {"t": 0.0, "v": None}
+
+
+def us_indices() -> dict:
+    """미국 지수 {이름: {price, change_pct}} (직전 종가 대비). yfinance, 5분 캐시. 실패한 지수는 error."""
+    if _US["v"] is not None and time.time() - _US["t"] < 300:
+        return _US["v"]
+    import yfinance as yf
+
+    out = {}
+    for name, sym in US_INDICES.items():
+        try:
+            c = yf.Ticker(sym).history(period="5d")["Close"].dropna()
+            out[name] = {"price": float(c.iloc[-1]), "change_pct": float((c.iloc[-1] / c.iloc[-2] - 1) * 100)}
+        except Exception as e:
+            log.warning("%s 조회 실패: %s", name, e)
+            out[name] = {"error": str(e)}
+    _US.update(t=time.time(), v=out)
+    return out

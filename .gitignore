@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 state_live.json
 .dashboard_pw.json
+.daily_*.json
