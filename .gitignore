@@ -1,0 +1,7 @@
+.env
+.token_*.json
+state.json
+logs/
+__pycache__/
+.venv/
+state_live.json
