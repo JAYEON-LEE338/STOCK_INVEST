@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>STOCK_INVEST 대시보드</title>
+<title>NATURE STOCK INVESTMENT</title>
 <style>
 :root{--bg:#f4f5f7;--card:#fff;--text:#1d2330;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--up:#dc2626;--down:#2563eb;--warn:#b45309;--bad:#b91c1c;--okbg:#dcfce7;--okfg:#166534;--warnbg:#fef3c7;--badbg:#fee2e2;--buyzone:rgba(22,163,74,.22);--sellzone:rgba(220,38,38,.20);color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c25;--text:#e5e7eb;--muted:#9aa3b2;--line:#2a303c;--accent:#60a5fa;--up:#f87171;--down:#60a5fa;--warn:#fbbf24;--bad:#f87171;--okbg:#14532d;--okfg:#bbf7d0;--warnbg:#451a03;--badbg:#450a0a;--buyzone:rgba(74,222,128,.22);--sellzone:rgba(248,113,113,.22);color-scheme:dark}}
@@ -11,7 +11,7 @@
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,"Segoe UI","Malgun Gothic",sans-serif;padding:0 16px}
 .wrap{max-width:1100px;margin:0 auto;padding-block:20px}
 header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:16px}
-h1{font-size:20px;margin:0}
+h1{font-size:13px;margin:0;letter-spacing:.06em;font-weight:700}
 .badges{display:flex;gap:8px;flex-wrap:wrap}
 .badge{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600}
 .b-ok{background:var(--okbg);color:var(--okfg)}.b-warn{background:var(--warnbg);color:var(--warn)}.b-bad{background:var(--badbg);color:var(--bad)}
@@ -44,10 +44,14 @@ pre{margin:0;max-height:300px;overflow:auto;font:12px/1.5 Consolas,monospace;whi
 .marker i{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-style:normal;font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap}
 .boxform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
 .boxform input{width:100px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
-.tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
-.tabs{flex-wrap:wrap}
-.tab{background:transparent;color:var(--muted);border-radius:8px 8px 0 0;padding:8px 16px;font-size:13px}
+.tabs{display:flex;gap:0;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
+.clink{color:var(--accent);text-decoration:none}.clink:hover{text-decoration:underline}
+.tab{background:transparent;color:var(--muted);border-radius:8px 8px 0 0;padding:8px 10px;font-size:13px;white-space:nowrap;flex:0 0 auto}
+@media (max-width:480px){.tab{padding:8px 7px;font-size:12.5px}}
 .tab.on{color:var(--accent);border-bottom:2px solid var(--accent);font-weight:700}
+.bottombar{position:sticky;bottom:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:flex-end;margin-top:18px;padding:8px 0;background:var(--bg);border-top:1px solid var(--line)}
+.bottombar .ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .rule{display:flex;gap:10px;align-items:baseline;padding:4px 0}.rule b{min-width:1.4em}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .legend s{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;text-decoration:none}
@@ -56,12 +60,14 @@ pre{margin:0;max-height:300px;overflow:auto;font:12px/1.5 Consolas,monospace;whi
 <body>
 <div class="wrap">
 <header>
-  <h1>STOCK_INVEST</h1>
+  <h1>NATURE STOCK INVESTMENT</h1>
   <div class="badges" id="badges"></div>
-  <div><span class="muted" id="now"></span> <button class="ghost" id="refresh">새로고침</button> <button class="ghost" id="pwBtn">비밀번호 변경</button> <a href="/logout" class="muted" style="font-size:12px">로그아웃</a></div>
 </header>
 <div class="tabs"><button class="tab" data-tab="main">대시보드</button><button class="tab" data-tab="fear">공포지수</button><button class="tab" data-tab="box">박스권</button><button class="tab" data-tab="mom">모멘텀</button><button class="tab" data-tab="scalp">초단타</button></div>
 <div class="grid" id="grid"><div class="card">불러오는 중…</div></div>
+<footer class="bottombar">
+  <div><span class="muted" id="now"></span> <button class="ghost" id="refresh">새로고침</button> <button class="ghost" id="pwBtn">비밀번호 변경</button> <a href="/logout" class="muted" style="font-size:12px">로그아웃</a></div>
+</footer>
 </div>
 <script>
 const $ = s => document.querySelector(s);
@@ -69,6 +75,17 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const won = n => Number(n).toLocaleString('ko-KR') + '원';
 const num = (n, d=2) => Number(n).toLocaleString('ko-KR', {minimumFractionDigits:d, maximumFractionDigits:d});
 const pct = n => `<span class="${n>0?'up':n<0?'down':''}">${n>0?'+':''}${Number(n).toFixed(2)}%</span>`;
+const CHARTS = {
+  '코스피': 'https://finance.naver.com/sise/sise_index.naver?code=KOSPI',
+  '코스닥': 'https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ',
+  'S&P 500': 'https://finance.yahoo.com/chart/%5EGSPC',
+  '다우': 'https://finance.yahoo.com/chart/%5EDJI',
+  '나스닥': 'https://finance.yahoo.com/chart/%5EIXIC',
+  'VIX': 'https://finance.yahoo.com/chart/%5EVIX',
+};
+const chartA = (label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer" class="clink" title="차트 열기">${label}</a>`;
+const idxLink = name => CHARTS[name] ? chartA(esc(name) + ' 📈', CHARTS[name]) : esc(name);
+const stockLink = (name, code) => chartA(esc(name), `https://finance.naver.com/item/fchart.naver?code=${encodeURIComponent(code)}`);
 const isErr = v => v && typeof v === 'object' && 'error' in v;
 const errTxt = v => `<div class="err">${esc(v.error)}</div>`;
 
@@ -80,7 +97,7 @@ function boxCard(b){
     : b.pos <= b.buy_pos && b.pos >= b.min_pos ? '매수 구간 (하단 근접)'
     : b.pos >= b.ladder[0] ? '매도 구간 (상단 근접)' : '중간 (관망)';
   const sellLines = b.ladder.map(t => `<div class="edge" style="left:${x(t)}%;opacity:.45;top:0;bottom:0;width:1px"></div>`).join('');
-  return `<div class="card wide"><h2>코스피 박스권 ${b.source==='manual'?'(직접 설정)':`(자동 산정: 최근 ${b.days}거래일, ${esc(b.from)} ~ ${esc(b.to)})`}</h2>
+  return `<div class="card wide"><h2>${idxLink('코스피')} 박스권 ${b.source==='manual'?'(직접 설정)':`(자동 산정: 최근 ${b.days}거래일, ${esc(b.from)} ~ ${esc(b.to)})`}</h2>
     <div class="row"><span><b>현재 ${num(b.current)}</b> · 박스 내 위치 <b>${(b.pos*100).toFixed(0)}%</b></span><span><b>${state}</b></span></div>
     <div class="gauge">
       <div class="zone" style="left:${x(b.min_pos)}%;width:${x(b.buy_pos)-x(b.min_pos)}%;background:var(--buyzone)"></div>
@@ -103,7 +120,7 @@ function boxCard(b){
 
 function sigCard(title, sig, extra){
   if (!sig || !sig.date) return `<div class="card"><h2>${title}</h2><span class="muted">아직 판단 기록이 없습니다</span></div>`;
-  const items = (sig.items||[]).map(i => `<tr><td>${esc(i.name)}</td><td>${esc(i.code)}</td>
+  const items = (sig.items||[]).map(i => `<tr><td>${stockLink(i.name, i.code)}</td><td>${esc(i.code)}</td>
     <td class="n">${i.vol_ratio!==undefined?'×'+i.vol_ratio:(i.qty?i.qty+'주':'')}</td></tr>`).join('');
   return `<div class="card"><h2>${title}</h2>
     <div class="row"><span class="muted">판단일</span><span>${esc(sig.date)}</span></div>
@@ -124,7 +141,7 @@ function candHtml(d){
   if (isErr(c)) return errTxt(c);
   const ok = v => `<span class="${v?'up':'muted'}">${v?'●':'○'}</span>`;
   const idxOk = typeof c.index_pct === 'number' && c.index_pct >= d.mom_cfg.index_min;
-  const rows = c.items.map(i => `<tr><td>${i.pick?'<b>매수 대상</b>':''}</td><td>${esc(i.name)}</td><td>${esc(i.sector)}</td>
+  const rows = c.items.map(i => `<tr><td>${i.pick?'<b>매수 대상</b>':''}</td><td>${stockLink(i.name, i.code)}</td><td>${esc(i.sector)}</td>
     <td class="n">${won(i.price)}</td><td class="n">${pct(i.change_pct)}</td><td class="n">${won(Math.round(i.value/1e6)*1e6).replace('원','')}</td>
     <td>${ok(i.c_sector)} 주도섹터 ${ok(i.c_up)} 상승 ${ok(i.c_hot)} 과열아님</td></tr>`).join('');
   return `<div class="row"><span class="muted">주도 섹터</span><span><b>${esc(c.lead)}</b> (${Object.entries(c.sector_avg).map(([k,v])=>esc(k)+' '+(v>0?'+':'')+v+'%').join(' / ')})</span></div>
@@ -150,7 +167,7 @@ function scalpTable(d){
   if (isErr(c)) return errTxt(c);
   const cf = d.scalp_cfg;
   const ok = v => v===null ? '<span class="muted">–</span>' : `<span class="${v?'up':'muted'}">${v?'●':'○'}</span>`;
-  const rows = c.items.map(i => `<tr><td>${i.pick?'<b>매수 대상</b>':i.done?'익절(재매수 금지)':''}</td><td>${esc(i.name)}</td><td>${esc(i.sector)}</td>
+  const rows = c.items.map(i => `<tr><td>${i.pick?'<b>매수 대상</b>':i.done?'익절(재매수 금지)':''}</td><td>${stockLink(i.name, i.code)}</td><td>${esc(i.sector)}</td>
     <td class="n">${won(i.price)}</td><td class="n">${pct(i.change_pct)}</td><td class="n">${i.vol_rate.toFixed(0)}%</td>
     <td>${ok(i.c_chg)} +${cf.min_change}% ${ok(i.c_vol)} 거래량 ${ok(i.c_sec)} 주도섹터 ${ok(i.c_trend)} 추세${i.watched?' · 포착':''}</td></tr>`).join('');
   return `<div class="row"><span class="muted">지수 (코스피 ≥ +${cf.index_min}% & 하락추세 아님)</span><span>${pct(c.index_pct)} · ${trendTxt(c.trend)} <span class="badge ${c.market_ok?'b-ok':'b-warn'}">${c.market_ok?'충족':'미충족'}</span></span></div>
@@ -189,7 +206,7 @@ function scalpCards(d){
   const rows = Object.entries(sp).filter(([,p]) => p.date === d.now.slice(0,10)).map(([code,p]) => {
     const h = held[code], px = h ? h.price : null;
     const pnl = px && p.qty>0 ? (px/p.entry - 1 - c.cost/100)*100 : null;
-    return `<tr><td>${esc(h?h.name:code)}</td><td>${esc(code)}</td><td>${esc((p.time||'').slice(11,16))}</td>
+    return `<tr><td>${stockLink(h?h.name:code, code)}</td><td>${esc(code)}</td><td>${esc((p.time||'').slice(11,16))}</td>
       <td class="n">${won(Math.round(p.entry))}</td><td class="n">${px?won(px):'-'}</td><td class="n">${pnl===null?'-':pct(pnl)}</td>
       <td class="n">${p.qty}/${p.base_qty}</td><td>${esc((p.steps||[]).join(', ')||'-')}</td></tr>`;
   }).join('');
@@ -235,7 +252,7 @@ function momCards(d){
   const rows = Object.entries(mp).map(([code, p]) => {
     const h = held[code], px = h ? h.price : null;
     const pnl = px && p.entry ? (px / p.entry - 1 - c.cost / 100) * 100 : null;
-    return `<tr><td>${esc(h ? h.name : code)}</td><td>${esc(code)}</td><td>${esc(p.date||'')}</td>
+    return `<tr><td>${stockLink(h ? h.name : code, code)}</td><td>${esc(code)}</td><td>${esc(p.date||'')}</td>
       <td class="n">${p.entry?won(Math.round(p.entry)):'-'}</td><td class="n">${px?won(px):'-'}</td>
       <td class="n">${pnl===null?'-':pct(pnl)}</td><td class="n">${p.qty}/${p.base_qty||p.qty}</td>
       <td>${esc((p.steps||[]).join(', ')||'-')}${p.was_neg?' · 본전매도 대기':''}</td></tr>`;
@@ -248,6 +265,7 @@ function momCards(d){
 }
 
 // ---------------------------------------------------------------- 탭별 공통 조각
+const LABELS = {fear: '공포지수', box: '박스권', mom: '모멘텀', scalp: '초단타'};
 const pnlOf = (px, entry, cost) => px && entry ? (px / entry - 1 - cost / 100) * 100 : null;
 function logCard(d, re){
   const lines = (d.logs||[]).filter(l => re.test(l));
@@ -270,13 +288,13 @@ function posRows(d){
 function posTable(rows, empty){
   if (!rows.length) return `<span class="muted">${empty}</span>`;
   return `<div class="tblwrap"><table><tr><th>구분</th><th>종목</th><th>코드</th><th class="n">수량</th><th class="n">현재가</th><th class="n">평가금액</th><th class="n">수익률</th></tr>${rows.map(r =>
-    `<tr><td>${esc(r.tag)}</td><td>${esc(r.name)}</td><td>${esc(r.code)}</td><td class="n">${r.qty}</td><td class="n">${r.price?won(r.price):'-'}</td>
+    `<tr><td>${esc(r.tag)}</td><td>${stockLink(r.name, r.code)}</td><td>${esc(r.code)}</td><td class="n">${r.qty}</td><td class="n">${r.price?won(r.price):'-'}</td>
      <td class="n">${r.price?won(r.qty*r.price):'-'}</td><td class="n">${r.pnl===null?'-':pct(r.pnl)}</td></tr>`).join('')}</table></div>`;
 }
 function idxRows(d){
   const row = (name, v, note) => isErr(v) || !v
-    ? `<div class="row"><span class="muted">${name}</span><span class="err">${isErr(v)?esc(v.error):'-'}</span></div>`
-    : `<div class="row"><span class="muted">${name}${note||''}</span><span><b>${num(v.price)}</b> ${pct(v.change_pct)}</span></div>`;
+    ? `<div class="row"><span class="muted">${idxLink(name)}</span><span class="err">${isErr(v)?esc(v.error):'-'}</span></div>`
+    : `<div class="row"><span class="muted">${idxLink(name)}${note||''}</span><span><b>${num(v.price)}</b> ${pct(v.change_pct)}</span></div>`;
   const kr = d.indices || {}, us = d.us_indices;
   return row('코스피', kr['코스피']) + row('코스닥', kr['코스닥']) +
     (isErr(us) ? `<div class="row"><span class="muted">미국 지수</span><span class="err">${esc(us.error)}</span></div>`
@@ -288,7 +306,7 @@ function marketCard(d){
   if (vixOk) vixState = vix >= d.vix_buy ? '매수 신호' : vix <= d.vix_sell_ladder[0] ? '매도 구간' : '관망';
   return `<div class="card"><h2>시장 지수</h2>
     ${idxRows(d)}
-    <div class="row"><span class="muted">VIX</span><span><b>${vixOk?vix.toFixed(2):'-'}</b> · ${vixState}</span></div>
+    <div class="row"><span class="muted">${idxLink('VIX')}</span><span><b>${vixOk?vix.toFixed(2):'-'}</b> · ${vixState}</span></div>
     <div class="row"><span class="muted">VIX 매수 기준 / 매도 시작</span><span>≥${d.vix_buy} / ≤${d.vix_sell_ladder[0]}</span></div>
     ${isErr(vix)?errTxt(vix):''}${isErr(d.kospi)?errTxt(d.kospi):''}
     ${d.cc && !isErr(d.cc)?`<div class="row"><span class="muted">${esc(d.cc.name||'커버드콜')} (${esc(d.cc.code)})</span><span>${won(d.cc.price)} ${pct(d.cc.change_pct)}</span></div>`:''}</div>`;
@@ -314,6 +332,9 @@ function scheduleCard(d){
 
 function overviewCards(d){
   const rows = posRows(d), out = [accountCard(d), marketCard(d)];
+  out.push(`<div class="card wide"><h2>전략 ON / OFF</h2>${Object.keys(LABELS).map(k => { const on=(d.enabled||{})[k]!==false;
+    return `<div class="row"><span>${LABELS[k]}</span><span><span class="badge ${on?'b-ok':'b-warn'}">${on?'ON':'OFF'}</span>
+    <button class="ghost" data-strategy="${k}" data-on="${on?0:1}">${on?'끄기':'켜기'}</button></span></div>`; }).join('')}</div>`);
   const groups = ['공포지수','박스권','모멘텀','초단타'].map(t => {
     const r = rows.filter(x => x.tag === t);
     return `<div class="row"><span class="muted">${t}</span><span>${r.length?r.map(x=>esc(x.name)).join(', '):'보유 없음'}</span></div>`;
@@ -358,10 +379,10 @@ function boxTab(d){
 }
 
 function render(d){
-  $('#now').textContent = d.now;
+  $('#now').textContent = `${+d.now.slice(5,7)}월 ${+d.now.slice(8,10)}일 ${d.now.slice(11)}`;
   $('#badges').innerHTML =
     `<span class="badge ${d.mode==='live'?'b-bad':'b-warn'}">${d.mode==='live'?'실전':'모의투자'}</span>` +
-    `<span class="badge ${d.dry_run?'b-ok':'b-bad'}">${d.dry_run?'DRY_RUN (주문 안 나감)':'실주문 ON'}</span>` +
+    `<span class="badge ${d.dry_run?'b-ok':'b-bad'}">${d.dry_run?'DRY_RUN':'실주문 ON'}</span>` +
     `<button class="${d.dry_run?'':'warnbtn'}" id="dryBtn">${d.dry_run?'실주문 켜기':'DRY_RUN 켜기 (주문 중단)'}</button>` +
     `<button class="${d.mode==='live'?'ghost':'warnbtn'}" id="modeBtn">${d.mode==='live'?'모의투자로 전환':'실전으로 전환'}</button>`;
   $('#modeBtn').onclick = async () => {
@@ -411,6 +432,14 @@ function render(d){
 
 function bind(d){
   const lg = $('#log'); if (lg) lg.scrollTop = lg.scrollHeight;
+  document.querySelectorAll('button[data-strategy]').forEach(btn => btn.onclick = async () => {
+    const on = btn.dataset.on === '1', name = LABELS[btn.dataset.strategy];
+    if (!confirm(on ? `${name} 전략을 켤까요? (다음 매수 시각부터 신규 매수)` : `${name} 전략을 끌까요?\n신규 매수만 중지되고, 보유 종목의 손절/매도는 계속됩니다.`)) return;
+    const r = await fetch('/api/strategy', {method:'POST', headers:{'X-Requested-With':'dashboard','Content-Type':'application/json'}, body:JSON.stringify({name: btn.dataset.strategy, enabled: on})});
+    const j = await r.json();
+    if (j.error) alert(j.error);
+    load(true);
+  });
   const postBox = async body => {
     const r = await fetch('/api/box', {method:'POST', headers:{'X-Requested-With':'dashboard','Content-Type':'application/json'}, body:JSON.stringify(body)});
     const j = await r.json();

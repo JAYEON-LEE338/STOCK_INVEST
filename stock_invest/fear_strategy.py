@@ -34,6 +34,9 @@ def run(kis: KIS) -> None:
     if vix >= config.VIX_BUY_MIN:
         if f["last_buy_date"] == today:
             return
+        if not s.get("enabled", {}).get("fear", True):
+            log.info("공포지수 전략 OFF - 매수 신호지만 매수하지 않음")
+            return
         room = budget - held_qty * px - orders.pending_amount(s, "fear")
         amount = min(budget * config.BUY_TRANCHE, room, bal["cash"])
         qty = int(amount // px)

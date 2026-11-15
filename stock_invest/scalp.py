@@ -49,6 +49,8 @@ def _done_codes(s: dict) -> list:
 # ---------------------------------------------------------------- 후보 스캔
 def scan(kis: KIS) -> None:
     """09:05 / 09:30 / 10:00 - 급등 + 거래량 급증 종목을 후보로 기록하고 최근 스캔 가격을 갱신."""
+    if not st.is_on("scalp"):
+        return
     data = daytrade._sector_rows(kis)
     s = st.load()
     w = _watch(s)
@@ -70,6 +72,9 @@ def buy(kis: KIS) -> None:
     """10:10 / 10:20 / 10:30 - 후보 중 모멘텀 조건 충족 & 추세가 살아있는 종목을 매수 (종목당 하루 1회, 하루 최대 SCALP_MAX_BUYS종목)."""
     now = dt.datetime.now().time()
     if not (dt.time(10, 10) <= now < dt.time(10, 45)):
+        return
+    if not st.is_on("scalp"):
+        log.info("초단타 전략 OFF - 매수 판단 건너뜀")
         return
     s = st.load()
     w = _watch(s)

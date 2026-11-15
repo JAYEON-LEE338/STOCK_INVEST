@@ -38,14 +38,14 @@ FAILS: dict[str, list] = {}  # {ip: [실패횟수, 차단해제시각]}
 log = logging.getLogger("app")
 
 LOGIN_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>로그인</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>NATURE STOCK INVESTMENT</title>
 <style>:root{--bg:#f4f5f7;--card:#fff;--text:#1d2330;--line:#d1d5db;--accent:#2563eb;--bad:#b91c1c;color-scheme:light}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c25;--text:#e5e7eb;--line:#2a303c;--accent:#60a5fa;--bad:#f87171;color-scheme:dark}}
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);font:14px -apple-system,"Segoe UI","Malgun Gothic",sans-serif;padding:16px}
 form{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;width:100%;max-width:320px;display:grid;gap:12px}
-h1{font-size:18px;margin:0}input{padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+h1{font-size:13px;margin:0;letter-spacing:.06em}input{padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
 button{padding:10px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;cursor:pointer}.err{color:var(--bad);font-size:13px}</style></head>
-<body><form method="post" action="/login"><h1>STOCK_INVEST</h1>
+<body><form method="post" action="/login"><h1>NATURE STOCK INVESTMENT</h1>
 <input type="password" name="password" placeholder="비밀번호" autofocus required>
 <button>로그인</button><div class="err">{{ERR}}</div></form></body></html>"""
 
@@ -124,6 +124,7 @@ def collect(kis, sched):
         "nxt_ticks": config.SELL_TICKS_BELOW, "trend_min": config.MOM_TREND_MIN,
         "trend_pct": config.MOM_TREND_PCT, "pm_index_min": config.MOM_PM_INDEX_MIN,
     }
+    d["enabled"] = {k: st.is_on(k) for k in st.STRATEGIES}
     d["alloc"] = {"fear": config.FEAR_RATIO, "scalp": config.SCALP_RATIO,
                   "box": config.DAY_RATIO * config.DAY_SPLIT_BOX, "mom": config.DAY_RATIO * config.DAY_SPLIT_MOM}
     d["box_cfg"] = {"stop": config.BOX_STOP_PCT, "sell_ratio": config.BOX_SELL_RATIO, "ladder": config.BOX_SELL_LADDER,
@@ -392,6 +393,25 @@ def make_handler(kis, sched, allowed_hosts):
                     return self._send(200, json.dumps({"mode": config.MODE}).encode())
                 except Exception as e:
                     return self._send(400, json.dumps({"error": f"모드 전환 실패: {e}"}, ensure_ascii=False).encode())
+
+            if self.path == "/api/strategy":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    req = json.loads(self.rfile.read(min(n, 1024)) or b"{}")
+                    name, on = req.get("name"), bool(req.get("enabled"))
+                    if name not in st.STRATEGIES:
+                        raise ValueError("알 수 없는 전략")
+                    with LOCK:
+                        s = st.load()
+                        s.setdefault("enabled", {})[name] = on
+                        st.save(s)
+                        CACHE["t"] = 0.0
+                    label = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타"}[name]
+                    log.warning("웹에서 전략 %s: %s (%s)", "ON" if on else "OFF", label, self.client_address[0])
+                    notify.send(f"{'🟢' if on else '⏸'} {label} 전략 {'ON' if on else 'OFF (신규 매수 중지, 보유분 매도는 계속)'}")
+                    return self._send(200, json.dumps({"name": name, "enabled": on}).encode())
+                except Exception as e:
+                    return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
 
             if self.path == "/api/box":
                 try:

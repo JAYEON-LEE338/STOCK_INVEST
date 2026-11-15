@@ -11,6 +11,7 @@ _DEFAULT = {
     "orders": {},  # {주문번호: {strategy, code, qty, price, orgno, date, time, applied, applied_cost, status}} 매수 체결 추적
     "box_manual": None,  # {lower, upper} 직접 설정한 박스권. None 이면 자동 산정
     "signals": {"box": {}, "momentum": {}},  # UI 표시용 최근 판단 결과
+    "enabled": {"fear": True, "box": True, "mom": True, "scalp": True},  # 전략별 신규 매수 ON/OFF
     "fear": {"sold_steps": [], "peak_qty": 0, "last_buy_date": "", "last_sell_date": ""},
 }
 
@@ -29,3 +30,11 @@ def load() -> dict:
 
 def save(d: dict) -> None:
     config.STATE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+STRATEGIES = ("fear", "box", "mom", "scalp")
+
+
+def is_on(name: str) -> bool:
+    """전략 신규 매수 ON 여부 (기본 ON)."""
+    return bool(load().get("enabled", {}).get(name, True))

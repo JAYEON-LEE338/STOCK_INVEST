@@ -9,7 +9,7 @@
   - 기본은 LocalSystem 계정으로 실행 (비밀번호 불필요, 로그인하지 않아도 부팅 시 시작).
     Python 패키지가 사용자 영역에 있어 접근이 안 되는 환경이면 -AsCurrentUser 로 현재 계정(비밀번호 입력)으로 실행.
   - -Yes : NSSM 설치 확인 질문을 건너뜀
-  - 부팅 후 자동(지연) 시작, 비정상 종료 시 30초 뒤 자동 재시작.
+  - 부팅 후 자동(지연) 시작, 비정상 종료 시 30초 뒤 자동 재시작. 로그는 logs	rade.log.
 #>
 param([switch]$AsCurrentUser, [switch]$Yes)
 $ErrorActionPreference = "Stop"
@@ -67,18 +67,15 @@ New-Item -ItemType Directory -Force $LogDir | Out-Null
 if ($AsCurrentUser) { & $nssm set $Name ObjectName $cred.UserName $plain } else { & $nssm set $Name ObjectName LocalSystem }
 & $nssm set $Name Start SERVICE_DELAYED_AUTO_START
 & $nssm set $Name AppEnvironmentExtra "PYTHONUNBUFFERED=1" "PYTHONIOENCODING=utf-8"
-& $nssm set $Name AppStdout (Join-Path $LogDir "service.log")
-& $nssm set $Name AppStderr (Join-Path $LogDir "service.log")
-& $nssm set $Name AppRotateFiles 1
-& $nssm set $Name AppRotateOnline 1
-& $nssm set $Name AppRotateBytes 5242880
 & $nssm set $Name AppExit Default Restart
 & $nssm set $Name AppRestartDelay 30000
-& $nssm set $Name AppStopMethodConsole 5000
+# 주의: AppStdout/AppStderr(출력 리디렉션)을 설정하면 서비스 중지 시 NSSM 이 "중지 중"에서 멈추는 문제가 있어 쓰지 않는다.
+# 앱 로그는 app.py 가 logs	rade.log 에 직접 기록한다.
+& $nssm set $Name AppStopMethodConsole 8000
 $plain = $null
 
 & $nssm start $Name
 Start-Sleep 3
 Get-Service $Name | Format-Table Name, Status, StartType -AutoSize
-Write-Host "완료. 로그: $LogDir\service.log, trade.log / 대시보드: http://127.0.0.1:8765"
+Write-Host "완료. 로그: $LogDir	rade.log / 대시보드: http://127.0.0.1:8765"
 Write-Host "관리: Get-Service $Name | Restart-Service $Name | Stop-Service $Name"

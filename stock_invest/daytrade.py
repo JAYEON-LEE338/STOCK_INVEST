@@ -57,6 +57,9 @@ def _save_signal(kind: str, sig: dict) -> None:
 # ---------------------------------------------------------------- 박스권
 def box_buy(kis: KIS) -> None:
     """15:20 - 코스피가 박스 하단에 가까우면 종가 단일가에 매수 (매수 2호가 지정가)."""
+    if not st.is_on("box"):
+        log.info("박스권 전략 OFF - 매수 판단 건너뜀")
+        return
     b = boxmod.get(kis)
     sig = {"date": _today(), "pos": round(b["pos"], 3), "items": [], "result": ""}
     if not b["valid"]:
@@ -199,6 +202,9 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     """kind: 'am'(10:01) / 'pm'(14:00~14:50 재매수). 매수가 이뤄졌으면 True."""
     pm = kind == "pm"
     sig_key = "momentum_pm" if pm else "momentum"
+    if not st.is_on("mom"):
+        log.info("모멘텀 전략 OFF - 매수 판단 건너뜀")
+        return False
     idx = kis.index_price("0001")["change_pct"]
     tr = index_trend(kis)
     sig = {"date": _today(), "time": dt.datetime.now().strftime("%H:%M"), "index_pct": idx,
