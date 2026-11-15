@@ -11,6 +11,7 @@ _DEFAULT = {
     "orders": {},  # {주문번호: {strategy, code, qty, price, orgno, date, time, applied, applied_cost, status}} 매수 체결 추적
     "box_manual": None,  # {lower, upper} 직접 설정한 박스권. None 이면 자동 산정
     "signals": {"box": {}, "momentum": {}},  # UI 표시용 최근 판단 결과
+    "alloc": {},  # 대시보드에서 바꾼 전략별 투자 비중 {fear, box, mom, scalp} (총평가금액 대비 0~1). 비어 있으면 config 기본값
     "enabled": {"fear": True, "box": True, "mom": True, "scalp": True},  # 전략별 신규 매수 ON/OFF
     "fear": {"sold_steps": [], "peak_qty": 0, "last_buy_date": "", "last_sell_date": ""},
 }
@@ -38,3 +39,11 @@ STRATEGIES = ("fear", "box", "mom", "scalp")
 def is_on(name: str) -> bool:
     """전략 신규 매수 ON 여부 (기본 ON)."""
     return bool(load().get("enabled", {}).get(name, True))
+
+
+def alloc() -> dict:
+    """전략별 투자 비중 {fear, box, mom, scalp} (총평가금액 대비 0~1). 저장된 값이 없으면 config 기본값."""
+    base = {"fear": config.FEAR_RATIO, "box": config.DAY_RATIO * config.DAY_SPLIT_BOX,
+            "mom": config.DAY_RATIO * config.DAY_SPLIT_MOM, "scalp": config.SCALP_RATIO}
+    saved = load().get("alloc") or {}
+    return {k: float(saved.get(k, v)) for k, v in base.items()}

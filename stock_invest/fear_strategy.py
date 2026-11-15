@@ -29,7 +29,7 @@ def run(kis: KIS) -> None:
     bal = kis.balance()
     held_qty = bal["holdings"].get(code, {}).get("qty", 0)
     px = kis.price(code)["price"]
-    budget = bal["total"] * config.FEAR_RATIO
+    budget = bal["total"] * st.alloc()["fear"]
 
     if vix >= config.VIX_BUY_MIN:
         if f["last_buy_date"] == today:

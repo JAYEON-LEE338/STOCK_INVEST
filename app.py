@@ -98,7 +98,7 @@ def collect(kis, sched):
     d = {
         "now": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "mode": config.MODE, "dry_run": config.DRY_RUN,
-        "be_arm": config.BE_ARM_PCT, "day_ratio": config.DAY_RATIO, "fear_ratio": config.FEAR_RATIO, "scalp_ratio": config.SCALP_RATIO,
+        "be_arm": config.BE_ARM_PCT, 
         "vix_buy": config.VIX_BUY_MIN, "vix_sell_ladder": config.VIX_SELL_LADDER,
         "covered_call_code": config.COVERED_CALL_CODE,
     }
@@ -106,8 +106,7 @@ def collect(kis, sched):
         bal = safe(kis.balance)
         d["balance"] = bal
         if "error" not in bal:
-            d["budgets"] = {"day": int(bal["total"] * config.DAY_RATIO), "scalp": int(bal["total"] * config.SCALP_RATIO),
-                            "fear": int(bal["total"] * config.FEAR_RATIO)}
+            d["budgets"] = {k: int(bal["total"] * v) for k, v in st.alloc().items()}
         d["vix"] = safe(market_data.vix)
         d["kospi"] = safe(lambda: kis.index_change("0001"))
         d["indices"] = {"코스피": safe(lambda: kis.index_price("0001")), "코스닥": safe(lambda: kis.index_price("1001"))}
@@ -115,7 +114,7 @@ def collect(kis, sched):
         d["cc"] = safe(lambda: kis.price(config.COVERED_CALL_CODE)) if config.COVERED_CALL_CODE else None
         d["box"] = safe(lambda: boxmod.get(kis))
     d["mom_cfg"] = {
-        "budget_ratio": config.DAY_RATIO * config.DAY_SPLIT_MOM, "pick": config.PICK_COUNT,
+        "budget_ratio": st.alloc()["mom"], "pick": config.PICK_COUNT,
         "index_min": config.MOM_INDEX_MIN, "max_change": config.MAX_CHANGE_PCT,
         "cost": config.MOM_ROUNDTRIP_COST * 100,
         "stop_pct": config.MOM_STOP_PCT, "stop_ratio": config.MOM_STOP_RATIO,
@@ -125,14 +124,13 @@ def collect(kis, sched):
         "trend_pct": config.MOM_TREND_PCT, "pm_index_min": config.MOM_PM_INDEX_MIN,
     }
     d["enabled"] = {k: st.is_on(k) for k in st.STRATEGIES}
-    d["alloc"] = {"fear": config.FEAR_RATIO, "scalp": config.SCALP_RATIO,
-                  "box": config.DAY_RATIO * config.DAY_SPLIT_BOX, "mom": config.DAY_RATIO * config.DAY_SPLIT_MOM}
+    d["alloc"] = st.alloc()
     d["box_cfg"] = {"stop": config.BOX_STOP_PCT, "sell_ratio": config.BOX_SELL_RATIO, "ladder": config.BOX_SELL_LADDER,
                     "min_width": config.BOX_MIN_WIDTH, "pick": config.PICK_COUNT}
     d["fear_cfg"] = {"tranche": config.BUY_TRANCHE, "step_ratio": config.SELL_STEP_RATIO}
     d["names"] = config.STOCK_NAMES
     d["scalp_cfg"] = {
-        "ratio": config.SCALP_RATIO, "min_change": config.SCALP_MIN_CHANGE, "vol_rate": config.SCALP_VOL_RATE,
+        "ratio": st.alloc()["scalp"], "min_change": config.SCALP_MIN_CHANGE, "vol_rate": config.SCALP_VOL_RATE,
         "require_mom": config.SCALP_REQUIRE_MOMENTUM, "index_min": config.MOM_INDEX_MIN,
         "stop": config.SCALP_STOP_PCT, "be_ratio": config.SCALP_BREAKEVEN_RATIO,
         "tp": config.SCALP_TAKE_PROFIT, "loss_min": config.SCALP_LOSS_ALERT_MIN,
@@ -393,6 +391,38 @@ def make_handler(kis, sched, allowed_hosts):
                     return self._send(200, json.dumps({"mode": config.MODE}).encode())
                 except Exception as e:
                     return self._send(400, json.dumps({"error": f"모드 전환 실패: {e}"}, ensure_ascii=False).encode())
+
+            if self.path == "/api/alloc":
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    req = json.loads(self.rfile.read(min(n, 1024)) or b"{}")
+                    labels = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타"}
+                    with LOCK:
+                        s = st.load()
+                        if req.get("reset"):
+                            s["alloc"] = {}
+                        else:
+                            vals = {}
+                            for k in labels:
+                                try:
+                                    v = float(req.get(k))
+                                except (TypeError, ValueError):
+                                    raise ValueError("모든 전략의 비중을 숫자로 입력하세요")
+                                if not (0 <= v <= 100):
+                                    raise ValueError(f"{labels[k]} 비중은 0~100% 여야 합니다")
+                                vals[k] = round(v / 100, 4)
+                            if sum(vals.values()) > 1.0001:
+                                raise ValueError(f"비중 합계가 {sum(vals.values())*100:.0f}% 입니다. 100% 를 넘을 수 없습니다")
+                            s["alloc"] = vals
+                        st.save(s)
+                        CACHE["t"] = 0.0
+                    cur = st.alloc()
+                    txt = " / ".join(f"{labels[k]} {cur[k]*100:.0f}%" for k in labels)
+                    log.warning("웹에서 투자 비중 변경(%s): %s", self.client_address[0], txt)
+                    notify.send(f"⚖️ 투자 비중 변경: {txt} (현금 {100 - sum(cur.values())*100:.0f}%)")
+                    return self._send(200, json.dumps({"alloc": cur}).encode())
+                except Exception as e:
+                    return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
 
             if self.path == "/api/strategy":
                 try:

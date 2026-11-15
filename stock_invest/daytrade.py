@@ -80,7 +80,7 @@ def box_buy(kis: KIS) -> None:
             bal = kis.balance()
             held_val = sum(min(p["qty"], bal["holdings"].get(c, {}).get("qty", 0)) * bal["holdings"].get(c, {}).get("price", 0)
                            for c, p in s["box_positions"].items()) + orders.pending_amount(s, "box")
-            budget = min(bal["total"] * config.DAY_RATIO * config.DAY_SPLIT_BOX - held_val, bal["cash"])
+            budget = min(bal["total"] * st.alloc()["box"] - held_val, bal["cash"])
             if budget <= 0 or not picks:
                 sig["result"] = "예산 여유 없음 또는 후보 없음"
             else:
@@ -240,7 +240,7 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     bal = kis.balance()
     held_val = sum(p["qty"] * bal["holdings"].get(c, {}).get("price", 0)
                    for c, p in s["mom_positions"].items() if p.get("date") == _today()) + orders.pending_amount(s, "mom")
-    budget = min(bal["total"] * config.DAY_RATIO * config.DAY_SPLIT_MOM - held_val, bal["cash"])
+    budget = min(bal["total"] * st.alloc()["mom"] - held_val, bal["cash"])
     if budget <= 0:
         return done("모멘텀 예산 여유 없음")
     per = budget / len(picks)

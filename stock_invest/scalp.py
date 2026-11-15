@@ -129,7 +129,7 @@ def buy(kis: KIS) -> None:
     bal = kis.balance()
     held_val = sum(p["qty"] * bal["holdings"].get(c, {}).get("price", 0)
                    for c, p in s["scalp_positions"].items() if p["qty"] > 0) + orders.pending_amount(s, "scalp")
-    budget = min(bal["total"] * config.SCALP_RATIO - held_val, bal["cash"])
+    budget = min(bal["total"] * st.alloc()["scalp"] - held_val, bal["cash"])
     if budget <= 0:
         return finish("초단타 예산 여유 없음")
     per = budget / len(picks)
