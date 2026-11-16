@@ -27,7 +27,8 @@ def run(kis: KIS) -> None:
     f = s["fear"]
     today = dt.date.today().isoformat()
     bal = kis.balance()
-    held_qty = bal["holdings"].get(code, {}).get("qty", 0)
+    # 같은 ETF 를 박스권 전략도 보유하므로, 계좌 보유 수량에서 박스권 몫을 뺀 것만 공포지수 몫으로 본다
+    held_qty = max(0, bal["holdings"].get(code, {}).get("qty", 0) - s["box_positions"].get(code, {}).get("qty", 0))
     px = kis.price(code)["price"]
     budget = bal["total"] * st.alloc()["fear"]
 

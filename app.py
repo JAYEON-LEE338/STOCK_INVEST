@@ -19,6 +19,7 @@ from urllib.parse import parse_qs
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from stock_invest import box as boxmod
+from stock_invest import breakout
 from stock_invest import config
 from stock_invest import daytrade
 from stock_invest import main as core
@@ -111,6 +112,7 @@ def collect(kis, sched):
         d["kospi"] = safe(lambda: kis.index_change("0001"))
         d["indices"] = {"코스피": safe(lambda: kis.index_price("0001")), "코스닥": safe(lambda: kis.index_price("1001"))}
         d["us_indices"] = safe(market_data.us_indices)
+        d["vkospi"] = safe(market_data.vkospi)
         d["cc"] = safe(lambda: kis.price(config.COVERED_CALL_CODE)) if config.COVERED_CALL_CODE else None
         d["box"] = safe(lambda: boxmod.get(kis))
     d["mom_cfg"] = {
@@ -137,6 +139,15 @@ def collect(kis, sched):
         "cost": config.MOM_ROUNDTRIP_COST * 100, "pick": config.PICK_COUNT,
         "max_buys": config.SCALP_MAX_BUYS,
     }
+    d["break_cfg"] = {
+        "ratio": st.alloc()["break"], "days": config.BREAK_DAYS, "upper_q": config.BREAK_UPPER_Q,
+        "vol_rate": config.BREAK_VOL_RATE, "f_days": config.BREAK_FOREIGN_DAYS, "f_recent": config.BREAK_FOREIGN_RECENT,
+        "max_buys": config.BREAK_MAX_BUYS, "stop": config.BREAK_STOP_PCT, "tp": config.BREAK_TAKE_PROFIT,
+        "cost": config.MOM_ROUNDTRIP_COST * 100,
+    }
+    d["break_positions"] = s.get("break_positions", {})
+    bd = s.get("break_done") or {}
+    d["break_done"] = bd.get("codes", []) if bd.get("date") == dt.date.today().isoformat() else []
     d["scalp_positions"] = s.get("scalp_positions", {})
     sd = s.get("scalp_done") or {}
     d["scalp_done"] = sd.get("codes", []) if sd.get("date") == dt.date.today().isoformat() else []
@@ -156,6 +167,7 @@ def collect(kis, sched):
 
 MOM_CAND = {"t": 0.0, "data": None}
 SCALP_CAND = {"t": 0.0, "data": None}
+BREAK_CAND = {"t": 0.0, "data": None}
 
 
 def mom_candidates(kis, n=5):
@@ -285,6 +297,12 @@ def make_handler(kis, sched, allowed_hosts):
                         MOM_CAND["data"] = safe(lambda: mom_candidates(kis))
                     MOM_CAND["t"] = time.time()
                 return self._send(200, json.dumps(MOM_CAND["data"], ensure_ascii=False).encode())
+            if path == "/api/break_candidates":
+                if time.time() - BREAK_CAND["t"] > 60 or BREAK_CAND["data"] is None:
+                    with LOCK:
+                        BREAK_CAND["data"] = safe(lambda: breakout.candidates(kis))
+                    BREAK_CAND["t"] = time.time()
+                return self._send(200, json.dumps(BREAK_CAND["data"], ensure_ascii=False).encode())
             if path == "/api/scalp_candidates":
                 if time.time() - SCALP_CAND["t"] > 30 or SCALP_CAND["data"] is None:
                     with LOCK:
@@ -396,7 +414,7 @@ def make_handler(kis, sched, allowed_hosts):
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                     req = json.loads(self.rfile.read(min(n, 1024)) or b"{}")
-                    labels = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타"}
+                    labels = {"fear": "공포지수", "box": "박스권", "momscalp": "모멘텀·단타(공용)", "break": "돌파매매"}
                     with LOCK:
                         s = st.load()
                         if req.get("reset"):
@@ -407,7 +425,7 @@ def make_handler(kis, sched, allowed_hosts):
                                 try:
                                     v = float(req.get(k))
                                 except (TypeError, ValueError):
-                                    raise ValueError("모든 전략의 비중을 숫자로 입력하세요")
+                                    raise ValueError("모든 항목의 비중을 숫자로 입력하세요")
                                 if not (0 <= v <= 100):
                                     raise ValueError(f"{labels[k]} 비중은 0~100% 여야 합니다")
                                 vals[k] = round(v / 100, 4)
@@ -419,7 +437,7 @@ def make_handler(kis, sched, allowed_hosts):
                     cur = st.alloc()
                     txt = " / ".join(f"{labels[k]} {cur[k]*100:.0f}%" for k in labels)
                     log.warning("웹에서 투자 비중 변경(%s): %s", self.client_address[0], txt)
-                    notify.send(f"⚖️ 투자 비중 변경: {txt} (현금 {100 - sum(cur.values())*100:.0f}%)")
+                    notify.send(f"⚖️ 투자 비중 변경: {txt} (현금 {100 - sum(cur[k] for k in labels)*100:.0f}%)")
                     return self._send(200, json.dumps({"alloc": cur}).encode())
                 except Exception as e:
                     return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False).encode())
@@ -436,7 +454,7 @@ def make_handler(kis, sched, allowed_hosts):
                         s.setdefault("enabled", {})[name] = on
                         st.save(s)
                         CACHE["t"] = 0.0
-                    label = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타"}[name]
+                    label = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타", "break": "돌파매매"}[name]
                     log.warning("웹에서 전략 %s: %s (%s)", "ON" if on else "OFF", label, self.client_address[0])
                     notify.send(f"{'🟢' if on else '⏸'} {label} 전략 {'ON' if on else 'OFF (신규 매수 중지, 보유분 매도는 계속)'}")
                     return self._send(200, json.dumps({"name": name, "enabled": on}).encode())

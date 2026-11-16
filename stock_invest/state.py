@@ -12,7 +12,9 @@ _DEFAULT = {
     "box_manual": None,  # {lower, upper} 직접 설정한 박스권. None 이면 자동 산정
     "signals": {"box": {}, "momentum": {}},  # UI 표시용 최근 판단 결과
     "alloc": {},  # 대시보드에서 바꾼 전략별 투자 비중 {fear, box, mom, scalp} (총평가금액 대비 0~1). 비어 있으면 config 기본값
-    "enabled": {"fear": True, "box": True, "mom": True, "scalp": True},  # 전략별 신규 매수 ON/OFF
+    "break_positions": {},  # {code: {qty, base_qty, entry, date, steps, level}} 돌파매매 보유 (여러 날 보유 가능)
+    "break_done": {"date": "", "codes": []},  # 오늘 익절한 종목 (재매수 금지)
+    "enabled": {"fear": True, "box": True, "mom": True, "scalp": True, "break": True},  # 전략별 신규 매수 ON/OFF
     "fear": {"sold_steps": [], "peak_qty": 0, "last_buy_date": "", "last_sell_date": ""},
 }
 
@@ -33,7 +35,7 @@ def save(d: dict) -> None:
     config.STATE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-STRATEGIES = ("fear", "box", "mom", "scalp")
+STRATEGIES = ("fear", "box", "mom", "scalp", "break")
 
 
 def is_on(name: str) -> bool:
@@ -42,8 +44,13 @@ def is_on(name: str) -> bool:
 
 
 def alloc() -> dict:
-    """전략별 투자 비중 {fear, box, mom, scalp} (총평가금액 대비 0~1). 저장된 값이 없으면 config 기본값."""
+    """전략별 투자 비중 (총평가금액 대비 0~1). 모멘텀과 단타는 하나의 비중(momscalp)을 공유한다.
+    반환: {fear, box, momscalp, break, mom, scalp}  (mom/scalp 는 momscalp 와 같은 값 — 같은 예산 풀)"""
     base = {"fear": config.FEAR_RATIO, "box": config.DAY_RATIO * config.DAY_SPLIT_BOX,
-            "mom": config.DAY_RATIO * config.DAY_SPLIT_MOM, "scalp": config.SCALP_RATIO}
-    saved = load().get("alloc") or {}
-    return {k: float(saved.get(k, v)) for k, v in base.items()}
+            "momscalp": config.DAY_RATIO * config.DAY_SPLIT_MOM + config.SCALP_RATIO, "break": config.BREAK_RATIO}
+    saved = dict(load().get("alloc") or {})
+    if "momscalp" not in saved and ("mom" in saved or "scalp" in saved):  # 예전 형식 호환
+        saved["momscalp"] = float(saved.get("mom", 0)) + float(saved.get("scalp", 0))
+    out = {k: float(saved.get(k, v)) for k, v in base.items()}
+    out["mom"] = out["scalp"] = out["momscalp"]
+    return out

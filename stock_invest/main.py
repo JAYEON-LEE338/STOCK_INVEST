@@ -10,6 +10,7 @@ from . import daytrade
 from . import fear_strategy
 from . import notify
 from . import orders
+from . import breakout
 from . import report
 from . import scalp
 from .kis_client import KIS
@@ -29,6 +30,7 @@ JOBS = [
     (fear_strategy.run, "VIX 공포지수 매매", 15, 10),
     (daytrade.box_buy, "박스권 하단 종가 매수", 15, 20),
     (scalp.close, "초단타 잔량 정리", 15, 15),
+    (breakout.buy_breakout, "돌파매매 매수 (14:50)", 14, 50),
     (daytrade.momentum_sell_evening, "모멘텀 NXT 매도", 19, 30),
 ]
 
@@ -82,6 +84,9 @@ def build_scheduler(kis, sched_cls=BlockingScheduler, lock=None):
                                   (scalp.buy, "scalp_buy_2", 10, 20), (scalp.buy, "scalp_buy_3", 10, 30)):
         sched.add_job(guarded(fn, kis, lock), "cron", day_of_week="mon-fri", hour=hour, minute=minute,
                       misfire_grace_time=120, id=jid)
+    # 돌파매매 손절/익절 감시: 매 분 (함수 내부에서 09:05~15:19 만 동작)
+    sched.add_job(guarded(breakout.monitor, kis, lock), "cron", day_of_week="mon-fri",
+                  hour="9-15", minute="*", misfire_grace_time=30, id="break_monitor")
     # 초단타 손실/익절 감시: 매 분 (함수 내부에서 10:00~15:14 만 동작)
     sched.add_job(guarded(scalp.monitor, kis, lock), "cron", day_of_week="mon-fri",
                   hour="10-15", minute="*", misfire_grace_time=30, id="scalp_monitor")

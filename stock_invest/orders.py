@@ -14,11 +14,11 @@ from .kis_client import KIS
 
 log = logging.getLogger("orders")
 
-POS_KEY = {"box": "box_positions", "mom": "mom_positions", "scalp": "scalp_positions"}
-CANCELABLE = ("mom", "scalp")  # 박스권(종가 단일가), 공포지수는 취소하지 않음
+POS_KEY = {"box": "box_positions", "mom": "mom_positions", "scalp": "scalp_positions", "break": "break_positions"}
+CANCELABLE = ("mom", "scalp", "break")  # 박스권(종가 단일가), 공포지수는 취소하지 않음
 EXPIRE_AT = dt.time(15, 35)  # 이 시각 이후 남은 정규장 주문은 만료로 처리
 NXT_EXPIRE_AT = dt.time(20, 1)  # NXT 애프터마켓 종료(20:00) 이후
-LABEL = {"box": "박스권", "mom": "모멘텀", "scalp": "초단타", "fear": "공포지수"}
+LABEL = {"box": "박스권", "mom": "모멘텀", "scalp": "초단타", "fear": "공포지수", "break": "돌파매매"}
 
 
 def _today() -> str:
@@ -29,6 +29,8 @@ def _new_position(strategy: str) -> dict:
     now = dt.datetime.now().isoformat(timespec="seconds")
     if strategy == "box":
         return {"qty": 0, "peak_qty": 0, "sold_steps": [], "date": _today()}
+    if strategy == "break":
+        return {"qty": 0, "base_qty": 0, "entry": None, "date": _today(), "steps": []}
     if strategy == "mom":
         return {"qty": 0, "base_qty": 0, "entry": None, "date": _today(), "sold_order": False,
                 "steps": [], "was_neg": False}
@@ -41,9 +43,9 @@ def _position(s: dict, strategy: str, code: str) -> dict | None:
     if not key:
         return None
     p = s[key].get(code)
-    if strategy == "box":
+    if strategy in ("box", "break"):  # 여러 날 보유하는 전략
         if p is None:
-            p = s[key][code] = _new_position("box")
+            p = s[key][code] = _new_position(strategy)
     elif p is None or p.get("date") != _today():
         p = s[key][code] = _new_position(strategy)
     return p
@@ -55,6 +57,8 @@ def apply_fill(s: dict, strategy: str, code: str, qty: int, price: float) -> Non
     if p is None or qty <= 0:
         return
     old = p["qty"]
+    if strategy == "break" and old <= 0:  # 청산 후 재진입: 이전 단계 기록 초기화
+        p.update(steps=[], base_qty=0, date=_today(), entry=None)
     if strategy == "box":
         p["entry"] = price if old <= 0 or not p.get("entry") else (p["entry"] * old + price * qty) / (old + qty)
         p["qty"] = old + qty

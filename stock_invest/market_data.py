@@ -50,3 +50,22 @@ def us_indices() -> dict:
             out[name] = {"error": str(e)}
     _US.update(t=time.time(), v=out)
     return out
+
+
+_VK = {"t": 0.0, "v": None}
+
+
+def vkospi() -> dict:
+    """V-KOSPI 선물 근월물(KRX:VKI1!) {price, change_pct}. 공식 VKOSPI 지수의 대용(표시 전용), 60초 캐시.
+    TradingView 공개 스캐너(비공식)라 실패할 수 있으며 그 경우 예외를 낸다."""
+    if _VK["v"] is not None and time.time() - _VK["t"] < 60:
+        return _VK["v"]
+    r = requests.post(
+        "https://scanner.tradingview.com/futures/scan",
+        json={"symbols": {"tickers": ["KRX:VKI1!"]}, "columns": ["close", "change"]},
+        headers={"User-Agent": "Mozilla/5.0", "Origin": "https://www.tradingview.com"}, timeout=10)
+    r.raise_for_status()
+    d = r.json()["data"][0]["d"]
+    v = {"price": float(d[0]), "change_pct": float(d[1])}
+    _VK.update(t=time.time(), v=v)
+    return v

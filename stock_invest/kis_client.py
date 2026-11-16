@@ -160,6 +160,44 @@ class KIS:
     def index_change(self, index_code: str = "0001") -> float:
         return self.index_price(index_code)["change_pct"]
 
+    def daily_ohlc(self, code: str, days: int = 40) -> list:
+        """오늘 제외 일봉 [{date, high, low, close, volume}] (최신순). 약 100거래일까지."""
+        end = dt.date.today()
+        j = self._request(
+            "GET", "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", "FHKST03010100",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                    "FID_INPUT_DATE_1": (end - dt.timedelta(days=int(days * 1.6) + 10)).strftime("%Y%m%d"),
+                    "FID_INPUT_DATE_2": end.strftime("%Y%m%d"),
+                    "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"},
+        )
+        today = end.strftime("%Y%m%d")
+        return [{"date": x["stck_bsop_date"], "high": int(x["stck_hgpr"]), "low": int(x["stck_lwpr"]),
+                 "close": int(x["stck_clpr"]), "volume": int(x["acml_vol"])}
+                for x in j.get("output2", []) if x.get("stck_bsop_date") and x["stck_bsop_date"] != today][:days]
+
+    def foreign_netbuy(self, code: str, days: int = 60) -> list:
+        """외국인 일별 순매수 수량 (최신순). 한 번에 30거래일씩이라 날짜를 거슬러 올라가며 이어 받는다."""
+        out, seen, end = [], set(), dt.date.today()
+        for _ in range(5):
+            j = self._request(
+                "GET", "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
+                params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                        "FID_INPUT_DATE_1": end.strftime("%Y%m%d"), "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""},
+            )
+            rows = [x for x in j.get("output2", []) if x.get("stck_bsop_date") and x["stck_bsop_date"] != dt.date.today().strftime("%Y%m%d")]
+            new = [x for x in rows if x["stck_bsop_date"] not in seen]
+            if not new:
+                break
+            for x in new:
+                seen.add(x["stck_bsop_date"])
+                out.append((x["stck_bsop_date"], int(x.get("frgn_ntby_qty") or 0)))
+            if len(out) >= days:
+                break
+            oldest = min(x["stck_bsop_date"] for x in new)
+            end = dt.datetime.strptime(oldest, "%Y%m%d").date() - dt.timedelta(days=1)
+        out.sort(reverse=True)
+        return [q for _, q in out[:days]]
+
     def daily_bars(self, code: str, days: int = 10) -> list[dict]:
         """일봉 (최신순): date(YYYYMMDD), close, volume."""
         j = self._request(

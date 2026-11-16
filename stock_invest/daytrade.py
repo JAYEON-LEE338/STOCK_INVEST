@@ -66,35 +66,24 @@ def box_buy(kis: KIS) -> None:
         sig["result"] = f"박스 폭 {b['width']:.1%} 로 너무 좁음 - 매수 안 함"
     elif not (config.BOX_MIN_POS <= b["pos"] <= config.BOX_BUY_POS):
         sig["result"] = f"박스 내 위치 {b['pos']:.0%} - 매수 구간(≤{config.BOX_BUY_POS:.0%}) 아님"
+    elif not config.COVERED_CALL_CODE:
+        sig["result"] = "COVERED_CALL_CODE 미설정 (.env) - 매수 안 함"
     else:
-        data = _sector_rows(kis)
-        if not data:
-            sig["result"] = "대상 종목 없음 (시총 조건 미충족 또는 시세 조회 실패)"
+        r = kis.price(config.COVERED_CALL_CODE)  # 박스권 매수 대상: KODEX 200 커버드콜 액티브 (공포지수와 동일)
+        s = st.load()
+        bal = kis.balance()
+        held_val = sum(min(p["qty"], bal["holdings"].get(c, {}).get("qty", 0)) * bal["holdings"].get(c, {}).get("price", 0)
+                       for c, p in s["box_positions"].items()) + orders.pending_amount(s, "box")
+        budget = min(bal["total"] * st.alloc()["box"] - held_val, bal["cash"])
+        qty = int(budget // r["price"]) if budget > 0 else 0
+        res = kis.order("buy", r["code"], qty) if qty > 0 else False
+        if res:
+            orders.on_buy(s, "box", res)
+            st.save(s)
+            sig["items"] = [{"code": r["code"], "name": r["name"], "qty": qty, "price": r["price"]}]
+            sig["result"] = f"박스 하단 근접 ({b['pos']:.0%}) - {r['name']} {qty}주 매수"
         else:
-            lead = _lead_sector(data)
-            sig["sector"] = lead
-            rows = [r for r in data[lead] if r["change_pct"] < config.MAX_CHANGE_PCT]
-            rows.sort(key=lambda r: r["value"], reverse=True)
-            picks = rows[: config.PICK_COUNT]
-            s = st.load()
-            bal = kis.balance()
-            held_val = sum(min(p["qty"], bal["holdings"].get(c, {}).get("qty", 0)) * bal["holdings"].get(c, {}).get("price", 0)
-                           for c, p in s["box_positions"].items()) + orders.pending_amount(s, "box")
-            budget = min(bal["total"] * st.alloc()["box"] - held_val, bal["cash"])
-            if budget <= 0 or not picks:
-                sig["result"] = "예산 여유 없음 또는 후보 없음"
-            else:
-                per = budget / len(picks)
-                bought = []
-                for r in picks:
-                    qty = int(per // r["price"])
-                    res = kis.order("buy", r["code"], qty) if qty > 0 else False
-                    if res:
-                        orders.on_buy(s, "box", res)
-                        bought.append({"code": r["code"], "name": r["name"], "qty": qty, "price": r["price"]})
-                st.save(s)
-                sig["items"] = bought
-                sig["result"] = f"박스 하단 근접 ({b['pos']:.0%}) - {len(bought)}종목 매수"
+            sig["result"] = "예산 여유 없음 또는 주문 실패"
     log.info("박스권 판단: %s", sig["result"])
     _save_signal("box", sig)
 
@@ -238,9 +227,12 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
         return done(f"주도 섹터({lead})에 매수할 상승 종목 없음")
 
     bal = kis.balance()
+    # 모멘텀·단타 공용 예산: 모멘텀 + 단타가 쓴 금액(보유 + 미체결)을 모두 차감
     held_val = sum(p["qty"] * bal["holdings"].get(c, {}).get("price", 0)
-                   for c, p in s["mom_positions"].items() if p.get("date") == _today()) + orders.pending_amount(s, "mom")
-    budget = min(bal["total"] * st.alloc()["mom"] - held_val, bal["cash"])
+                   for c, p in s["mom_positions"].items() if p.get("date") == _today()) + orders.pending_amount(s, "mom") \
+        + sum(p["qty"] * bal["holdings"].get(c, {}).get("price", 0)
+              for c, p in s["scalp_positions"].items() if p["qty"] > 0) + orders.pending_amount(s, "scalp")
+    budget = min(bal["total"] * st.alloc()["momscalp"] - held_val, bal["cash"])
     if budget <= 0:
         return done("모멘텀 예산 여유 없음")
     per = budget / len(picks)
