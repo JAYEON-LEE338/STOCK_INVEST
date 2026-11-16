@@ -1,7 +1,9 @@
 """돌파매매 (총평가금액의 BREAK_RATIO, 기본 0%)
 
-매수(14:50): 외국인 3개월 순매수 증가 + 20일 박스권(고가 상단) 돌파 + 전일 대비 거래량 +30% 이상.
-매도(1분 감시): -5% 전량 손절, +10%/+20% 각 30% 익절. 오버나이트 가능.
+매수(15:20 종가 단일가): 외국인 3개월 순매수 금액 누적 > 0(시총 대비) 이고 최근 20일 순매수 > 0
+  + 20일 박스권(최고가) 돌파 + 전일 대비 거래량 +30% 이상. 종가 확인으로 가짜 돌파를 거른다.
+매도(1분 감시): R = ATR×2.0. -1R 전량 손절, 돌파 실패(3거래일 안에 기준선 아래 마감) 전량,
+  +2R 50% 익절, 이후 최고가-1R 추적 손절. 오버나이트 가능.
 """
 import datetime as dt
 import logging
@@ -10,6 +12,7 @@ from . import config
 from . import daytrade
 from . import notify
 from . import orders
+from . import risk
 from . import state as st
 from .kis_client import KIS
 
@@ -32,6 +35,17 @@ def _quantile(vals: list, q: float) -> float:
     return v[lo] + (v[min(lo + 1, len(v) - 1)] - v[lo]) * (pos - lo)
 
 
+def _trading_days_since(date_str: str) -> int:
+    """매수일 다음 날부터 오늘까지의 평일 수 (휴장일은 근사)."""
+    d0 = dt.date.fromisoformat(date_str)
+    n, d = 0, d0
+    while d < dt.date.today():
+        d += dt.timedelta(days=1)
+        if d.weekday() < 5:
+            n += 1
+    return n
+
+
 def box_upper(kis: KIS, code: str):
     """최근 BREAK_DAYS 거래일(오늘 제외) 고가의 BREAK_UPPER_Q 분위수. 데이터 부족하면 None."""
     if _UPPER["date"] != _today():
@@ -51,20 +65,24 @@ def box_upper(kis: KIS, code: str):
     return up
 
 
-def foreign_ok(kis: KIS, code: str):
-    """(충족 여부, 상세) - 3개월 누적 순매수 > 0 이고 누적이 증가 중(최근 N일 순매수 합 > 0). 데이터 부족/오류면 (False, ...)."""
+def foreign_ok(kis: KIS, code: str, mcap: int):
+    """(충족 여부, 상세) - 3개월 외국인 순매수 금액 누적 > 0 (시총 대비 BREAK_FOREIGN_MIN_PCT% 이상)
+    이고 누적이 증가 중(최근 N일 순매수 금액 합 > 0). 데이터 부족/오류면 (False, ...)."""
     if _FOREIGN["date"] != _today():
         _FOREIGN["date"], _FOREIGN["v"] = _today(), {}
     if code in _FOREIGN["v"]:
         return _FOREIGN["v"][code]
     try:
-        q = kis.foreign_netbuy(code, config.BREAK_FOREIGN_DAYS)  # 오늘(장중 미완성) 제외, 최신순
+        rows = kis.foreign_netbuy(code, config.BREAK_FOREIGN_DAYS)  # 최신순, 오늘 제외, amt=백만원
         n = config.BREAK_FOREIGN_RECENT
-        if len(q) < n * 2:
-            res = (False, {"error": f"외국인 데이터 부족 ({len(q)}일)"})
+        if len(rows) < n * 2:
+            res = (False, {"error": f"외국인 데이터 부족 ({len(rows)}일)"})
         else:
-            total, recent, prev = sum(q), sum(q[:n]), sum(q[n:n * 2])
-            res = (total > 0 and recent > 0, {"total": total, "recent": recent, "prev": prev})
+            total = sum(x["amt"] for x in rows)
+            recent = sum(x["amt"] for x in rows[:n])
+            ratio = total / (mcap * 100) * 100 if mcap else 0.0  # 시총(억원)→백만원 환산 후 %
+            ok = total > 0 and recent > 0 and ratio >= config.BREAK_FOREIGN_MIN_PCT
+            res = (ok, {"total": total, "recent": recent, "ratio_pct": round(ratio, 3)})
     except Exception as e:
         log.warning("외국인 순매수 조회 실패 %s: %s", code, e)
         res = (False, {"error": str(e)})
@@ -80,7 +98,7 @@ def _evaluate(kis: KIS, r: dict, with_foreign: bool = True) -> dict:
     c_break = up is not None and r["price"] > up
     c_for, detail = None, None
     if with_foreign and c_vol and c_break and not hot:
-        c_for, detail = foreign_ok(kis, r["code"])
+        c_for, detail = foreign_ok(kis, r["code"], r.get("mcap", 0))
     return {"code": r["code"], "name": r["name"], "price": r["price"], "change_pct": r["change_pct"],
             "vol_rate": r["vol_rate"], "upper": up, "c_vol": c_vol, "c_break": c_break, "c_for": c_for,
             "foreign": detail, "hot": hot}
@@ -90,11 +108,19 @@ def _all(c: dict) -> bool:
     return bool(c["c_vol"] and c["c_break"] and c["c_for"] and not c["hot"])
 
 
-# ---------------------------------------------------------------- 매수
+def _done_codes(s: dict) -> list:
+    d = s.get("break_done") or {}
+    if d.get("date") != _today():
+        d = {"date": _today(), "codes": []}
+    s["break_done"] = d
+    return d["codes"]
+
+
+# ---------------------------------------------------------------- 매수 (15:20 종가 단일가)
 def buy_breakout(kis: KIS) -> None:
-    """14:50 - 돌파 조건을 모두 만족한 종목을 매수 (하루 최대 BREAK_MAX_BUYS종목)."""
+    """15:20 - 종가 단일가에서 돌파 조건을 다시 확인하고 매수 (하루 최대 BREAK_MAX_BUYS종목)."""
     now = dt.datetime.now().time()
-    if not (dt.time(14, 45) <= now < dt.time(15, 5)):
+    if not (dt.time(15, 15) <= now < dt.time(15, 30)):
         return
     if not st.is_on("break"):
         log.info("돌파매매 OFF - 매수 판단 건너뜀")
@@ -144,28 +170,23 @@ def buy_breakout(kis: KIS) -> None:
     per = budget / len(picks)
     n = 0
     for c in picks:
-        qty = int(per // c["price"])
-        res = kis.order("buy", c["code"], qty) if qty > 0 else False
+        rp = risk.r_pct(kis, c["code"], config.BREAK_ATR_MULT, config.BREAK_R_MIN, config.BREAK_R_MAX)
+        qty = risk.size_qty(bal["total"], c["price"], rp, per)
+        res = kis.order("buy", c["code"], qty, mode="chase") if qty > 0 else False
         if res:
             orders.on_buy(s, "break", res)
-            sig["items"].append({"code": c["code"], "name": c["name"], "price": c["price"],
-                                 "change_pct": c["change_pct"], "qty": qty, "vol_rate": c["vol_rate"]})
+            s["break_positions"][c["code"]].update(r_pct=round(rp, 3), level=c["upper"])
+            sig["items"].append({"code": c["code"], "name": c["name"], "price": c["price"], "change_pct": c["change_pct"],
+                                 "qty": qty, "vol_rate": c["vol_rate"], "r_pct": round(rp, 2)})
             n += 1
-    finish(f"돌파 종목 {n}개 매수")
-
-
-def _done_codes(s: dict) -> list:
-    d = s.get("break_done") or {}
-    if d.get("date") != _today():
-        d = {"date": _today(), "codes": []}
-    s["break_done"] = d
-    return d["codes"]
+    finish(f"돌파 종목 {n}개 매수 (종가 단일가)")
 
 
 # ---------------------------------------------------------------- 감시
 def monitor(kis: KIS) -> None:
-    """09:05~15:19 1분 간격 - 손절/익절."""
-    if not (dt.time(9, 5) <= dt.datetime.now().time() < dt.time(15, 20)):
+    """09:05~15:19 1분 간격 - R 기준 손절, 돌파 실패, 익절, 추적 손절."""
+    now = dt.datetime.now().time()
+    if not (dt.time(9, 5) <= now < dt.time(15, 20)):
         return
     s = st.load()
     live = {c: p for c, p in s["break_positions"].items() if p["qty"] > 0 and p.get("entry")}
@@ -186,30 +207,39 @@ def monitor(kis: KIS) -> None:
             log.warning("돌파매매 감시 시세 조회 실패 %s: %s", code, e)
             continue
         name = config.STOCK_NAMES.get(code, code)
-        pnl = (px / p["entry"] - 1 - config.MOM_ROUNDTRIP_COST) * 100
+        entry, rp = p["entry"], p.get("r_pct") or config.BREAK_R_MAX
+        pnl = (px / entry - 1 - config.MOM_ROUNDTRIP_COST) * 100
         steps, base = p["steps"], p["base_qty"]
+        if px > p.get("high", 0):
+            p["high"] = px
+            changed = True
         sells = []
-        if pnl <= config.BREAK_STOP_PCT:
+        failed = (now >= dt.time(15, 15) and p.get("level") and px < p["level"]
+                  and p.get("date") != _today() and _trading_days_since(p["date"]) <= config.BREAK_FAIL_DAYS)
+        if pnl <= -rp:
             sells.append(("stop", p["qty"]))
+        elif failed:
+            sells.append(("fail", p["qty"]))
         else:
-            for thr, ratio in config.BREAK_TAKE_PROFIT:
-                if pnl >= thr and f"tp{thr}" not in steps:
-                    sells.append((f"tp{thr}", max(1, round(base * ratio))))
+            if pnl >= config.TP_R * rp and "tp" not in steps:
+                sells.append(("tp", max(1, round(base * config.TP_RATIO))))
+            if "tp" in steps and p.get("high") and px <= p["high"] * (1 - config.BREAK_TRAIL_R * rp / 100):
+                sells.append(("trail", p["qty"]))
         for step, want in sells:
             qty = min(p["qty"], want)
             if hq is not None:
                 qty = min(qty, hq)
             if qty <= 0:
                 break
-            if orders.track_sell(s, "break", kis.order("sell", code, qty)):
+            if orders.track_sell(s, "break", kis.order("sell", code, qty), entry, step):
                 p["qty"] -= qty
                 if hq is not None:
                     hq -= qty
                 steps.append(step)
                 changed = True
-                if step.startswith("tp") and code not in done:
+                if step == "tp" and code not in done:
                     done.append(code)
-                log.info("돌파매매 %s 매도 %s x%s (수익률 %+.2f%%)", step, code, qty, pnl)
+                log.info("돌파매매 %s 매도 %s x%s (수익률 %+.2f%%, R %.2f%%)", step, code, qty, pnl, rp)
                 notify.send(f"🚀 돌파매매 {step} 매도 {name}({code}) x{qty} (수익률 {pnl:+.2f}%)")
             else:
                 notify.send(f"⚠️ 돌파매매 {step} 매도 주문 실패 {name}({code})")

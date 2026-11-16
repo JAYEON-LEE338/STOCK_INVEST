@@ -8,6 +8,7 @@ import datetime as dt
 import logging
 
 from . import config
+from . import journal
 from . import notify
 from . import state as st
 from .kis_client import KIS
@@ -15,7 +16,7 @@ from .kis_client import KIS
 log = logging.getLogger("orders")
 
 POS_KEY = {"box": "box_positions", "mom": "mom_positions", "scalp": "scalp_positions", "break": "break_positions"}
-CANCELABLE = ("mom", "scalp", "break")  # 박스권(종가 단일가), 공포지수는 취소하지 않음
+CANCELABLE = ("mom", "scalp")  # 박스권·돌파(종가 단일가), 공포지수는 취소하지 않음
 EXPIRE_AT = dt.time(15, 35)  # 이 시각 이후 남은 정규장 주문은 만료로 처리
 NXT_EXPIRE_AT = dt.time(20, 1)  # NXT 애프터마켓 종료(20:00) 이후
 LABEL = {"box": "박스권", "mom": "모멘텀", "scalp": "초단타", "fear": "공포지수", "break": "돌파매매"}
@@ -30,7 +31,7 @@ def _new_position(strategy: str) -> dict:
     if strategy == "box":
         return {"qty": 0, "peak_qty": 0, "sold_steps": [], "date": _today()}
     if strategy == "break":
-        return {"qty": 0, "base_qty": 0, "entry": None, "date": _today(), "steps": []}
+        return {"qty": 0, "base_qty": 0, "entry": None, "date": _today(), "steps": [], "high": 0}
     if strategy == "mom":
         return {"qty": 0, "base_qty": 0, "entry": None, "date": _today(), "sold_order": False,
                 "steps": [], "was_neg": False}
@@ -52,13 +53,15 @@ def _position(s: dict, strategy: str, code: str) -> dict | None:
 
 
 def apply_fill(s: dict, strategy: str, code: str, qty: int, price: float) -> None:
-    """체결 qty 주를 price 에 전략 보유로 반영."""
+    """체결 qty 주를 price 에 전략 보유로 반영 (거래 기록에도 남김)."""
+    if qty > 0:
+        journal.record(strategy, "buy", code, qty, price)
     p = _position(s, strategy, code)
     if p is None or qty <= 0:
         return
     old = p["qty"]
     if strategy == "break" and old <= 0:  # 청산 후 재진입: 이전 단계 기록 초기화
-        p.update(steps=[], base_qty=0, date=_today(), entry=None)
+        p.update(steps=[], base_qty=0, date=_today(), entry=None, high=0)
     if strategy == "box":
         p["entry"] = price if old <= 0 or not p.get("entry") else (p["entry"] * old + price * qty) / (old + qty)
         p["qty"] = old + qty
@@ -85,14 +88,18 @@ def on_buy(s: dict, strategy: str, res: dict) -> None:
         "applied": 0, "applied_cost": 0.0, "status": "open"}
 
 
-def track_sell(s: dict, strategy: str, res):
-    """kis.order('sell') 결과를 그대로 돌려주면서 실주문이면 체결 확인 목록에 등록."""
+def track_sell(s: dict, strategy: str, res, entry: float | None = None, note: str = ""):
+    """kis.order('sell') 결과를 그대로 돌려주면서 실주문이면 체결 확인 목록에 등록.
+    entry(매수가)를 주면 거래 기록에 실현 손익이 남는다. DRY 는 즉시, 실주문은 체결될 때 기록."""
+    if res and res.get("dry"):
+        journal.record(strategy, "sell", res["code"], res["qty"], res["price"], entry, note)
     if res and not res.get("dry") and res.get("odno"):
         s.setdefault("orders", {})[res["odno"]] = {
             "strategy": strategy, "side": "sell", "code": res["code"], "qty": res["qty"], "price": res["price"],
             "orgno": res.get("orgno", ""), "exchange": res.get("exchange", "KRX"), "date": _today(),
             "time": dt.datetime.now().isoformat(timespec="seconds"),
-            "applied": 0, "applied_cost": 0.0, "status": "open", "alerted": False}
+            "applied": 0, "applied_cost": 0.0, "status": "open", "alerted": False,
+            "entry": entry, "note": note}
     return res
 
 
@@ -126,6 +133,12 @@ def _finish(s: dict, odno: str, o: dict, status: str) -> None:
 def _sync_sell(s: dict, odno: str, o: dict, r: dict | None, now: dt.datetime) -> None:
     """매도 체결 확인: 다 체결되면 종료, 오래 미체결이면 알림, 마감 후 미체결분은 알림 + (모멘텀 NXT) 다음날 정리 수량으로."""
     if r:
+        d = r["ccld_qty"] - o["applied"]
+        if d > 0:  # 새로 체결된 매도 수량을 거래 기록에 (평균 체결가 기준)
+            cost = r["avg"] * r["ccld_qty"]
+            px = (cost - o.get("applied_cost", 0)) / d if cost else o["price"]
+            journal.record(o["strategy"], "sell", o["code"], d, px, o.get("entry"), o.get("note", ""))
+            o["applied_cost"] = cost
         o["applied"] = r["ccld_qty"]
     name = config.STOCK_NAMES.get(o["code"], o["code"])
     label = LABEL.get(o["strategy"], o["strategy"])

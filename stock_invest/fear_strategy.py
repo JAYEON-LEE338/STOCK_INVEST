@@ -57,7 +57,7 @@ def run(kis: KIS) -> None:
         if f["peak_qty"] == 0:
             f["peak_qty"] = held_qty
         qty = min(held_qty, max(1, int(f["peak_qty"] * config.SELL_STEP_RATIO)))
-        if orders.track_sell(s, "fear", kis.order("sell", code, qty)):
+        if orders.track_sell(s, "fear", kis.order("sell", code, qty), bal["holdings"].get(code, {}).get("avg"), f"vix{step}"):
             f["sold_steps"].append(step)
             f["last_sell_date"] = today
             log.info("분할 매도 단계 VIX<=%s (VIX=%.2f)", step, vix)

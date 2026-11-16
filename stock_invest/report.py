@@ -25,6 +25,8 @@ def build(kis: KIS) -> str:
             tags[config.COVERED_CALL_CODE] = "공포"
         tags.update({c: "박스권" for c in s["box_positions"]})
         tags.update({c: "모멘텀" for c in s["mom_positions"]})
+        tags.update({c: "눌림목" for c, p in s.get("scalp_positions", {}).items() if p.get("qty", 0) > 0})
+        tags.update({c: "돌파" for c, p in s.get("break_positions", {}).items() if p.get("qty", 0) > 0})
         held = [f"· {h['name']}({c}) {h['qty']}주 {h['qty'] * h['price']:,}원 [{tags.get(c, '-')}]"
                 for c, h in bal["holdings"].items()]
         lines.append("보유 종목:\n" + "\n".join(held) if held else "보유 종목 없음")

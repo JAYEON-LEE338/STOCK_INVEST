@@ -34,7 +34,7 @@ def has_creds(mode: str) -> bool:
 def set_mode(mode: str) -> None:
     """모의/실전 전환. 이후 모든 모듈이 config.X 로 읽으므로 즉시 반영된다."""
     global MODE, IS_MOCK, APP_KEY, APP_SECRET, ACCOUNT_NO, ACCOUNT_PROD, BASE_URL
-    global MIN_CALL_INTERVAL, TOKEN_FILE, STATE_FILE, DAILY_FILE
+    global MIN_CALL_INTERVAL, TOKEN_FILE, STATE_FILE, DAILY_FILE, RISK_FILE
     mode = "live" if mode == "live" else "mock"
     MODE, IS_MOCK = mode, mode != "live"
     APP_KEY, APP_SECRET, acct = _creds(mode)
@@ -45,6 +45,7 @@ def set_mode(mode: str) -> None:
     MIN_CALL_INTERVAL = 0.6 if IS_MOCK else 0.08  # 초당 호출 제한 대응
     TOKEN_FILE = BASE_DIR / f".token_{mode}.json"
     DAILY_FILE = BASE_DIR / f".daily_{mode}.json"  # 일일 매수 금액 사용액
+    RISK_FILE = BASE_DIR / f".risk_{mode}.json"  # 하루 시작 평가금액 (손실 한도 판단)
     # 모의/실전 상태(보유 전략 기록 등)가 섞이지 않게 분리. 모의는 기존 파일 유지.
     STATE_FILE = BASE_DIR / ("state.json" if IS_MOCK else "state_live.json")
 
@@ -103,25 +104,39 @@ BOX_STOP_PCT = -5.0  # 평균 매수가 대비 이 수익률 이하면 전량 �
 
 # 모멘텀 전략 (10시 기준)
 MOM_INDEX_MIN = 1.0  # 코스피 등락률 +1% 이상
+# ---- 위험 관리 (모멘텀·단타·돌파 공통) ----
+RISK_PER_TRADE = 0.005  # 1R 손절 시 계좌 손실 비율 (0.5%)
+DAILY_LOSS_LIMIT_PCT = 2.0  # 하루 시작 평가금액 대비 이 % 이상 손실이면 그날 신규 매수 중단
+MAX_STOCK_PCT = 0.15  # 종목당 최대 노출 (모든 전략 합산, 커버드콜 ETF 제외)
+ATR_DAYS = 14  # ATR 산정 기간(거래일)
+TP_R = 2.0  # 1차 익절 지점 (R 배수)
+TP_RATIO = 0.5  # 1차 익절 매도 비율
+CHASE_MAX_TICKS = 3  # 즉시 체결형 매수: 매도 1호가로 사되 현재가 + 이 틱 수를 넘지 않음
+
 # 돌파매매 (별도 비중, 기본 0% = 대시보드에서 설정해야 동작)
 BREAK_RATIO = 0.0
 BREAK_UPPER_Q = 1.0  # 20일 고가의 이 분위수를 넘으면 돌파 (1.0 = 20일 최고가, 0.95 = 코스피 박스와 동일 기준)
 BREAK_DAYS = 20  # 박스 산정 기간(거래일)
 BREAK_VOL_RATE = 130.0  # 전일 거래량 대비 누적 거래량(%) 이상 (130 = 전일 대비 +30%)
 BREAK_FOREIGN_DAYS = 60  # 외국인 순매수 확인 기간(거래일, 약 3개월)
-BREAK_FOREIGN_RECENT = 20  # 최근 구간 길이(거래일): 최근 N일 합 > 직전 N일 합
+BREAK_FOREIGN_RECENT = 20  # 최근 N거래일 순매수 합 > 0 이면 누적이 증가 중
 BREAK_MAX_BUYS = 2  # 하루 최대 매수 종목 수
-BREAK_STOP_PCT = -5.0  # 이 수익률 이하면 전량 손절
-BREAK_TAKE_PROFIT = [(10.0, 0.30), (20.0, 0.30)]  # (수익률 %, 매도 비율)
+BREAK_ATR_MULT = 2.0  # R = ATR × 2.0
+BREAK_R_MIN, BREAK_R_MAX = 3.0, 10.0  # R 범위(%)
+BREAK_TRAIL_R = 1.0  # 1차 익절 후 최고가 - 1R 이탈 시 나머지 매도
+BREAK_FAIL_DAYS = 3  # 매수 후 이 거래일 안에 기준선 아래로 마감하면 돌파 실패 청산
+BREAK_FOREIGN_MIN_PCT = 0.0  # 3개월 외국인 순매수 금액 / 시가총액 (%) 하한
 
 # 초단타 전략 (총평가금액의 SCALP_RATIO)
 SCALP_MIN_CHANGE = 5.0  # 전일 대비 +5% 이상
 SCALP_VOL_RATE = 50.0  # 전일 거래량 대비 누적 거래량 비율(%) 이상이면 급증
-SCALP_REQUIRE_MOMENTUM = True  # 모멘텀 매수 조건(코스피 +1%, 주도 섹터, 지수 하락 추세 아님)도 요구
 SCALP_MAX_BUYS = 2  # 하루 최대 매수 종목 수
-SCALP_STOP_PCT = -3.0  # 이 수익률 이하면 전량 매도
+SCALP_ATR_MULT = 1.0  # R = ATR × 1.0
+SCALP_R_MIN, SCALP_R_MAX = 1.5, 5.0
+SCALP_TRAIL_R = 1.0
+SCALP_VWAP_BAND = 0.01  # 현재가 ≤ VWAP×(1+1%) 이면 눌림 구간
+SCALP_HOLD_CHANGE = 3.0  # 눌림 후에도 등락률이 이 % 이상이어야 매수
 SCALP_BREAKEVEN_RATIO = 0.50  # 마이너스였다가 본전 회복 시 매도 비율
-SCALP_TAKE_PROFIT = [(3.0, 0.30), (6.0, 0.30), (9.0, 0.30)]  # (수익률 %, 매도 비율)
 SCALP_LOSS_ALERT_MIN = 30  # 매수 후 이 시간(분) 지나도 손실이면 알림
 MOM_TREND_MIN = 30  # 지수 추세 판단 기간(분)
 MOM_TREND_PCT = 0.2  # 이 % 이상 내리면 하락, 오르면 상승 추세
@@ -129,13 +144,16 @@ MOM_PM_INDEX_MIN = 1.0  # 오후 재매수 시 코스피 등락률 기준(%)
 BE_ARM_PCT = -2.0  # 이 수익률 이하까지 내려간 적이 있어야 본전 회복 매도가 켜짐 (모멘텀·초단타)
 SELL_ALERT_MIN = 3  # 정규장 매도 주문이 이 시간(분) 넘게 미체결이면 알림
 BUY_CANCEL_MIN = 10  # 모멘텀·초단타 매수 주문이 이 시간(분) 안에 다 체결되지 않으면 잔량 취소
+MOM_ATR_MULT = 1.5  # R = ATR × 1.5
+MOM_R_MIN, MOM_R_MAX = 1.5, 6.0
+MOM_TRAIL_R = 1.0  # 1차 익절 후 최고가 - 1R 이탈 시 나머지 매도
+MOM_OR_MIN = 30  # 장 초반 고가 산정 구간(분): 09:01~09:30
+MOM_EXIT_CLOSE = True  # 15:15 정규장에서 남은 수량 전량 청산 (NXT 는 보조)
+MOM_PM_ENABLED = False  # 오후 재매수 (폐지)
 MOM_ROUNDTRIP_COST = 0.0025  # 왕복 수수료+세금 (수익률 계산 시 차감)
-MOM_STOP_PCT = -3.0  # 수익률 -3% 이하면 손절
 MOM_STOP_RATIO = 0.50  # 손절 시 매도 비율 (최초 수량 기준)
 MOM_STOP2_WAIT_MIN = 5  # 1차 손절 후 이 시간(분)이 지나서도 -3% 이하면 2차 손절
-MOM_STOP2_RATIO = 0.50  # 2차 손절 매도 비율 (최초 수량 기준)
 MOM_BREAKEVEN_RATIO = 0.30  # 마이너스였다가 본전 회복 시 매도 비율
-MOM_TAKE_PROFIT = [(3.0, 0.30), (6.0, 0.30)]  # (수익률 %, 매도 비율)
 NXT_PRICE_MARKET = os.getenv("NXT_PRICE_MARKET", "NX")
 NXT_ORDER_EXCHANGE = os.getenv("NXT_ORDER_EXCHANGE", "NXT")
 

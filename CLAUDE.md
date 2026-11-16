@@ -19,4 +19,6 @@
 - `stock_invest/`: 소스 패키지 (config, kis_client, daytrade, fear_strategy, box 등, `ui.html` 포함)
 - `doc/`: 전략 문서 등 (`CLAUDE.md` 외 md 파일)
 - `service/`: 윈도우 서비스(`NATURE_STOCK`) 등록/제거 스크립트 (관리자 PowerShell 에서 실행)
+- 돌파매매 백테스트: `python -m stock_invest.backtest` (과거 2년 일봉, `--detail` 로 거래 목록)
+- 거래 기록: `trades_{mode}.jsonl` (Git 제외), 대시보드에 전략별 성과 표시
 - 보조 실행: `python -m stock_invest.check`, `python -m stock_invest.telegram_setup`, `python -m stock_invest.main`(스케줄러만)

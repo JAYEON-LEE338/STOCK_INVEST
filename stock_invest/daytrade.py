@@ -1,8 +1,8 @@
 """단타 전략 (계좌의 40%)
 
 1) 박스권: 코스피가 박스 하단에 가까우면 15:20 종가 매수, 상단 70% 근접부터 25%씩 매도.
-2) 모멘텀: 10시 기준 코스피 +1% 이상 & 주도 섹터 & 지수 하락 추세 아님이면 매수,
-   14~15시 지수가 다시 상승 추세면 재매수, 장중 손절/익절 감시, 잔량은 당일 19:30 NXT 에서 매도.
+2) 모멘텀: 10:01 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님 & 장 초반 30분 고가 돌파 → 상대 강도 상위 매수.
+   R(ATR) 기준 손절/익절/추적 손절, 15:15 정규장 청산 (NXT 19:30 / 다음날 09:05 는 보조).
 """
 import datetime as dt
 import logging
@@ -12,6 +12,7 @@ from . import box as boxmod
 from . import config
 from . import notify
 from . import orders
+from . import risk
 from . import state as st
 from .kis_client import KIS, tick_size
 
@@ -41,10 +42,20 @@ def _sector_rows(kis: KIS) -> dict:
     return data
 
 
+def sector_scores(data: dict) -> dict:
+    """섹터별 등락률 중앙값 (한 종목 급등에 섹터 전체가 끌려가지 않도록 평균 대신 중앙값)."""
+    out = {}
+    for sec, rows in data.items():
+        v = sorted(r["change_pct"] for r in rows)
+        n = len(v)
+        out[sec] = v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+    return out
+
+
 def _lead_sector(data: dict) -> str:
-    avg = {s: sum(r["change_pct"] for r in rows) / len(rows) for s, rows in data.items()}
-    lead = max(avg, key=avg.get)
-    log.info("섹터 평균 등락률: %s -> 주도 섹터: %s", {k: round(v, 2) for k, v in avg.items()}, lead)
+    med = sector_scores(data)
+    lead = max(med, key=med.get)
+    log.info("섹터 등락률 중앙값: %s -> 주도 섹터: %s", {k: round(v, 2) for k, v in med.items()}, lead)
     return lead
 
 
@@ -114,7 +125,7 @@ def box_sell(kis: KIS) -> None:
             qty = h  # 마지막 단계는 전량
         else:
             qty = min(h, max(1, round(p["peak_qty"] * config.BOX_SELL_RATIO * len(new))))
-        if orders.track_sell(s, "box", kis.order("sell", code, qty)):
+        if orders.track_sell(s, "box", kis.order("sell", code, qty), p.get("entry") or held.get(code, {}).get("avg"), "ladder"):
             p["sold_steps"] += new
             p["qty"] -= qty
             log.info("박스권 분할 매도 %s x%s (박스 위치 %.0f%%, 단계 %s)", code, qty, b["pos"] * 100, new)
@@ -149,7 +160,7 @@ def box_monitor(kis: KIS) -> None:
         if pnl > config.BOX_STOP_PCT:
             continue
         name = config.STOCK_NAMES.get(code, code)
-        if orders.track_sell(s, "box", kis.order("sell", code, qty)):
+        if orders.track_sell(s, "box", kis.order("sell", code, qty), entry, "stop"):
             log.warning("박스권 손절 %s x%s (수익률 %+.2f%%)", code, qty, pnl)
             notify.send(f"🛑 박스권 손절 {name}({code}) {qty}주 (수익률 {pnl:+.2f}%)")
             p["qty"] -= qty
@@ -188,7 +199,7 @@ def index_trend(kis: KIS) -> dict:
 
 
 def _momentum_entry(kis: KIS, kind: str) -> bool:
-    """kind: 'am'(10:01) / 'pm'(14:00~14:50 재매수). 매수가 이뤄졌으면 True."""
+    """kind: 'am'(10:01) / 'pm'(오후 재매수, MOM_PM_ENABLED 일 때만). 매수가 이뤄졌으면 True."""
     pm = kind == "pm"
     sig_key = "momentum_pm" if pm else "momentum"
     if not st.is_on("mom"):
@@ -220,11 +231,22 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     sig["sector"] = lead
 
     s = st.load()
-    cands = [r for r in data[lead] if 0 < r["change_pct"] < config.MAX_CHANGE_PCT]
-    cands.sort(key=lambda r: r["value"], reverse=True)
+    cands = []
+    for r in data[lead]:
+        if not (0 < r["change_pct"] < config.MAX_CHANGE_PCT):
+            continue
+        try:
+            orh = kis.or_high(r["code"], config.MOM_OR_MIN)  # 장 초반 30분 고가
+        except Exception as e:
+            log.warning("초반 고가 조회 실패 %s: %s", r["code"], e)
+            continue
+        if orh <= 0 or r["price"] <= orh:
+            continue  # 초반 고가를 돌파하지 못함
+        cands.append({**r, "or_high": orh, "rs": round(r["change_pct"] - idx, 2)})
+    cands.sort(key=lambda r: r["rs"], reverse=True)  # 상대 강도 순
     picks = cands[: config.PICK_COUNT]
     if not picks:
-        return done(f"주도 섹터({lead})에 매수할 상승 종목 없음")
+        return done(f"주도 섹터({lead})에 장 초반 30분 고가를 돌파한 상승 종목 없음")
 
     bal = kis.balance()
     # 모멘텀·단타 공용 예산: 모멘텀 + 단타가 쓴 금액(보유 + 미체결)을 모두 차감
@@ -238,34 +260,39 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     per = budget / len(picks)
     n_bought = 0
     for r in picks:
-        qty = int(per // r["price"])
-        res = kis.order("buy", r["code"], qty) if qty > 0 else False
+        rp = risk.r_pct(kis, r["code"], config.MOM_ATR_MULT, config.MOM_R_MIN, config.MOM_R_MAX)
+        qty = risk.size_qty(bal["total"], r["price"], rp, per)
+        res = kis.order("buy", r["code"], qty, mode="chase") if qty > 0 else False
         if res:
             orders.on_buy(s, "mom", res)
+            s["mom_positions"][r["code"]].update(r_pct=round(rp, 3))
             sig["items"].append({"code": r["code"], "name": r["name"], "price": r["price"],
-                                 "change_pct": r["change_pct"], "qty": qty})
+                                 "change_pct": r["change_pct"], "qty": qty, "rs": r["rs"], "r_pct": round(rp, 2)})
             n_bought += 1
     st.save(s)
     return done(f"{lead} 주도 - {n_bought}종목 매수" + (" (오후 재매수)" if pm else ""), n_bought > 0)
 
 
 def momentum_buy(kis: KIS) -> None:
-    """10:01 - 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님이면 거래대금 상위 매수."""
+    """10:01 - 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님 & 장 초반 30분 고가 돌파 → 상대 강도 상위 매수."""
     _momentum_entry(kis, "am")
 
 
 def momentum_buy_pm(kis: KIS) -> None:
-    """14:00~14:50 (10분 간격) - 지수가 다시 상승 추세면 하루 1회 재매수."""
+    """14:00~14:50 오후 재매수 - 폐지(MOM_PM_ENABLED=False). 켜면 지수 상승 추세일 때 하루 1회."""
+    if not config.MOM_PM_ENABLED:
+        return
     now = dt.datetime.now().time()
     if not (dt.time(14, 0) <= now < dt.time(15, 0)):
         return
-    if (st.load()["signals"].get("momentum_pm") or {}).get("items") and             st.load()["signals"]["momentum_pm"].get("date") == _today():
+    sp = st.load()["signals"].get("momentum_pm") or {}
+    if sp.get("items") and sp.get("date") == _today():
         return  # 오늘 오후 매수 완료
     _momentum_entry(kis, "pm")
 
 
 def momentum_monitor(kis: KIS) -> None:
-    """10:02~15:19 - 모멘텀 보유 종목 손절/본전/익절 감시 (1분 간격)."""
+    """10:02~15:19 - 모멘텀 보유 종목 손절/본전/익절/추적 손절 (1분 간격, R 기준)."""
     now = dt.datetime.now().time()
     if not (dt.time(10, 2) <= now < dt.time(15, 20)):
         return
@@ -275,7 +302,7 @@ def momentum_monitor(kis: KIS) -> None:
     if not todo:
         return
     changed = False
-    held = None if config.DRY_RUN else kis.balance()["holdings"]  # 지정가 매수 체결 확인용
+    held = None if config.DRY_RUN else kis.balance()["holdings"]
     for code, p in todo.items():
         hq = None
         if held is not None:
@@ -287,17 +314,22 @@ def momentum_monitor(kis: KIS) -> None:
         except Exception as e:
             log.warning("모멘텀 감시 시세 조회 실패 %s: %s", code, e)
             continue
-        pnl = (px / p["entry"] - 1 - config.MOM_ROUNDTRIP_COST) * 100
+        entry = p["entry"]
+        rp = p.get("r_pct") or config.MOM_R_MAX
+        pnl = (px / entry - 1 - config.MOM_ROUNDTRIP_COST) * 100
+        if px > p.get("high", 0):
+            p["high"] = px
+            changed = True
         steps = p.setdefault("steps", [])
         base = p.get("base_qty", p["qty"])
         sells = []  # (단계, 비율)
-        if pnl <= config.MOM_STOP_PCT and "stop" not in steps:
+        if pnl <= -rp and "stop" not in steps:
             sells.append(("stop", config.MOM_STOP_RATIO))
         if "stop" in steps and "stop2" not in steps and p.get("stop_at"):
             waited = (dt.datetime.now() - dt.datetime.fromisoformat(p["stop_at"])).total_seconds()
             if waited >= config.MOM_STOP2_WAIT_MIN * 60:
-                if pnl <= config.MOM_STOP_PCT:
-                    sells.append(("stop2", config.MOM_STOP2_RATIO))
+                if pnl <= -rp:
+                    sells.append(("stop2", 1.0))
                 else:
                     steps.append("stop2")  # 회복했으므로 2차 손절 판단 종료
                     changed = True
@@ -306,16 +338,17 @@ def momentum_monitor(kis: KIS) -> None:
             changed = True
         if pnl >= 0 and p.get("was_neg") and "breakeven" not in steps:
             sells.append(("breakeven", config.MOM_BREAKEVEN_RATIO))
-        for thr, ratio in config.MOM_TAKE_PROFIT:
-            if pnl >= thr and f"tp{thr}" not in steps:
-                sells.append((f"tp{thr}", ratio))
+        if pnl >= config.TP_R * rp and "tp" not in steps:
+            sells.append(("tp", config.TP_RATIO))
+        if "tp" in steps and p.get("high") and px <= p["high"] * (1 - config.MOM_TRAIL_R * rp / 100):
+            sells.append(("trail", 1.0))
         for name, ratio in sells:
-            qty = min(p["qty"], max(1, round(base * ratio)))
+            qty = p["qty"] if ratio >= 1 else min(p["qty"], max(1, round(base * ratio)))
             if hq is not None:
                 qty = min(qty, hq)
             if qty <= 0:
                 break
-            if orders.track_sell(s, "mom", kis.order("sell", code, qty)):
+            if orders.track_sell(s, "mom", kis.order("sell", code, qty), entry, name):
                 p["qty"] -= qty
                 if hq is not None:
                     hq -= qty
@@ -323,14 +356,37 @@ def momentum_monitor(kis: KIS) -> None:
                 if name == "stop":
                     p["stop_at"] = dt.datetime.now().isoformat(timespec="seconds")
                 changed = True
-                log.info("모멘텀 %s 매도 %s x%s (수익률 %+.2f%%)", name, code, qty, pnl)
-                notify.send(f"📉 모멘텀 {name} 매도 {code} x{qty} (수익률 {pnl:+.2f}%)")
+                log.info("모멘텀 %s 매도 %s x%s (수익률 %+.2f%%, R %.2f%%)", name, code, qty, pnl, rp)
+                notify.send(f"📉 모멘텀 {name} 매도 {config.STOCK_NAMES.get(code, code)}({code}) x{qty} (수익률 {pnl:+.2f}%)")
             else:
                 log.error("모멘텀 %s 매도 주문 실패 %s", name, code)
                 notify.send(f"⚠️ 모멘텀 {name} 매도 주문 실패 {code}")
                 break
     if changed:
         st.save(s)
+
+
+def momentum_close(kis: KIS) -> None:
+    """15:15 - 모멘텀 남은 수량을 정규장에서 전량 시장가 청산 (MOM_EXIT_CLOSE). 실패분은 19:30 NXT / 다음날 09:05 보조."""
+    if not config.MOM_EXIT_CLOSE:
+        return
+    s = st.load()
+    live = {c: p for c, p in s["mom_positions"].items() if p["qty"] > 0 and p.get("date") == _today()
+            and not p.get("sold_order")}
+    if not live:
+        return
+    held = None if config.DRY_RUN else kis.balance()["holdings"]
+    for code, p in live.items():
+        qty = p["qty"] if held is None else min(p["qty"], held.get(code, {}).get("qty", 0))
+        if qty <= 0:
+            continue
+        if orders.track_sell(s, "mom", kis.order("sell", code, qty), p.get("entry"), "close"):
+            p["qty"] -= qty
+            p.setdefault("steps", []).append("close")
+            log.info("모멘텀 장마감 청산 %s x%s", code, qty)
+        else:
+            notify.send(f"⚠️ 모멘텀 15:15 청산 실패 {code} x{qty} - 19:30 NXT 에서 다시 시도합니다")
+    st.save(s)
 
 
 def momentum_sell_evening(kis: KIS) -> None:
@@ -348,7 +404,7 @@ def momentum_sell_evening(kis: KIS) -> None:
             px = kis.price(code, market=config.NXT_PRICE_MARKET)["price"]
             limit = px - tick_size(px) * config.SELL_TICKS_BELOW
             if orders.track_sell(s, "mom", kis.order("sell", code, p["qty"], price=limit,
-                                                     exchange=config.NXT_ORDER_EXCHANGE)):
+                                                     exchange=config.NXT_ORDER_EXCHANGE), p.get("entry"), "nxt"):
                 p["sold_order"] = True
             else:
                 log.error("NXT 매도 주문 실패 %s", code)
@@ -370,7 +426,7 @@ def sell_fallback(kis: KIS) -> None:
         qty = min(p["qty"], held.get(code, {}).get("qty", 0))
         if qty > 0:
             log.warning("전일 모멘텀 잔여 종목 정리: %s x%s", code, qty)
-            if not orders.track_sell(s, "mom", kis.order("sell", code, qty)):
+            if not orders.track_sell(s, "mom", kis.order("sell", code, qty), p.get("entry"), "fallback"):
                 notify.send(f"⚠️ 09:05 모멘텀 잔여 정리 매도 실패 {code} x{qty}")
         del s["mom_positions"][code]
     st.save(s)

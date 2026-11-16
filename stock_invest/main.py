@@ -22,16 +22,16 @@ KR_HOLIDAYS = holidays.KR()
 JOBS = [
     (daytrade.sell_fallback, "전일 모멘텀 잔여 정리", 9, 5),
     (report.daily_status, "10시 현황 알림", 10, 0),
-    (daytrade.momentum_buy, "모멘텀 매수 (10시 기준)", 10, 1),
-    (daytrade.momentum_buy_pm, "모멘텀 오후 재매수 (14:00~14:50, 10분 간격)", 14, 0),
-    (scalp.scan, "초단타 후보 스캔 (09:05 / 09:30 / 10:00)", 9, 5),
-    (scalp.buy, "초단타 매수 (10:10 / 10:20 / 10:30)", 10, 10),
+    (daytrade.momentum_buy, "모멘텀 매수 (초반 30분 고가 돌파)", 10, 1),
+    (scalp.scan, "눌림목 후보 스캔 (09:05 / 09:30 / 10:00)", 9, 5),
+    (scalp.buy, "눌림목 매수 (10:05~13:55, 5분 간격)", 10, 5),
     (daytrade.box_sell, "박스권 상단 분할 매도", 15, 0),
     (fear_strategy.run, "VIX 공포지수 매매", 15, 10),
     (daytrade.box_buy, "박스권 하단 종가 매수", 15, 20),
-    (scalp.close, "초단타 잔량 정리", 15, 15),
-    (breakout.buy_breakout, "돌파매매 매수 (14:50)", 14, 50),
-    (daytrade.momentum_sell_evening, "모멘텀 NXT 매도", 19, 30),
+    (scalp.close, "눌림목 잔량 정리", 15, 15),
+    (daytrade.momentum_close, "모멘텀 장마감 청산", 15, 15),
+    (breakout.buy_breakout, "돌파매매 종가 매수", 15, 20),
+    (daytrade.momentum_sell_evening, "모멘텀 NXT 매도 (15:15 실패분 보조)", 19, 30),
 ]
 
 
@@ -68,8 +68,6 @@ def build_scheduler(kis, sched_cls=BlockingScheduler, lock=None):
     for fn, _label, h, m in JOBS:
         sched.add_job(guarded(fn, kis, lock), "cron", day_of_week="mon-fri", hour=h, minute=m,
                       misfire_grace_time=120, id=fn.__name__)
-    sched.add_job(guarded(daytrade.momentum_buy_pm, kis, lock), "cron", day_of_week="mon-fri", hour=14,
-                  minute="10,20,30,40,50", misfire_grace_time=120, id="momentum_buy_pm_more")
     # 매수 체결 반영 / 미체결 취소: 매 분 09:00~15:59 (15:35 이후 남은 주문은 만료 처리)
     sched.add_job(guarded(orders.sync, kis, lock), "cron", day_of_week="mon-fri",
                   hour="9-15", minute="*", misfire_grace_time=30, id="orders_sync")
@@ -81,13 +79,13 @@ def build_scheduler(kis, sched_cls=BlockingScheduler, lock=None):
                   hour="9-15", minute="*", misfire_grace_time=30, id="box_monitor")
     # 같은 작업의 추가 실행 시각 (JOBS 의 첫 시각 외)
     for fn, jid, hour, minute in ((scalp.scan, "scalp_scan_2", 9, 30), (scalp.scan, "scalp_scan_3", 10, 0),
-                                  (scalp.buy, "scalp_buy_2", 10, 20), (scalp.buy, "scalp_buy_3", 10, 30)):
+                                  (scalp.buy, "scalp_buy_more", "10-13", "*/5")):
         sched.add_job(guarded(fn, kis, lock), "cron", day_of_week="mon-fri", hour=hour, minute=minute,
                       misfire_grace_time=120, id=jid)
     # 돌파매매 손절/익절 감시: 매 분 (함수 내부에서 09:05~15:19 만 동작)
     sched.add_job(guarded(breakout.monitor, kis, lock), "cron", day_of_week="mon-fri",
                   hour="9-15", minute="*", misfire_grace_time=30, id="break_monitor")
-    # 초단타 손실/익절 감시: 매 분 (함수 내부에서 10:00~15:14 만 동작)
+    # 눌림목(단타) 손실/익절 감시: 매 분 (함수 내부에서 10:00~15:14 만 동작)
     sched.add_job(guarded(scalp.monitor, kis, lock), "cron", day_of_week="mon-fri",
                   hour="10-15", minute="*", misfire_grace_time=30, id="scalp_monitor")
     # 모멘텀 손절/익절 감시: 매 분 (함수 내부에서 10:02~15:19 만 동작)

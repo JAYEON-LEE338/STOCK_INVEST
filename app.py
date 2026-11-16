@@ -21,6 +21,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from stock_invest import box as boxmod
 from stock_invest import breakout
 from stock_invest import config
+from stock_invest import journal
+from stock_invest import risk
 from stock_invest import daytrade
 from stock_invest import main as core
 from stock_invest import market_data
@@ -118,12 +120,13 @@ def collect(kis, sched):
     d["mom_cfg"] = {
         "budget_ratio": st.alloc()["mom"], "pick": config.PICK_COUNT,
         "index_min": config.MOM_INDEX_MIN, "max_change": config.MAX_CHANGE_PCT,
-        "cost": config.MOM_ROUNDTRIP_COST * 100,
-        "stop_pct": config.MOM_STOP_PCT, "stop_ratio": config.MOM_STOP_RATIO,
-        "stop2_wait": config.MOM_STOP2_WAIT_MIN, "stop2_ratio": config.MOM_STOP2_RATIO,
-        "be_ratio": config.MOM_BREAKEVEN_RATIO, "tp": config.MOM_TAKE_PROFIT,
-        "nxt_ticks": config.SELL_TICKS_BELOW, "trend_min": config.MOM_TREND_MIN,
-        "trend_pct": config.MOM_TREND_PCT, "pm_index_min": config.MOM_PM_INDEX_MIN,
+        "cost": config.MOM_ROUNDTRIP_COST * 100, "atr_mult": config.MOM_ATR_MULT,
+        "r_min": config.MOM_R_MIN, "r_max": config.MOM_R_MAX, "trail_r": config.MOM_TRAIL_R,
+        "stop_ratio": config.MOM_STOP_RATIO, "stop2_wait": config.MOM_STOP2_WAIT_MIN,
+        "be_ratio": config.MOM_BREAKEVEN_RATIO, "tp_r": config.TP_R, "tp_ratio": config.TP_RATIO,
+        "or_min": config.MOM_OR_MIN, "exit_close": config.MOM_EXIT_CLOSE,
+        "nxt_ticks": config.SELL_TICKS_BELOW, "trend_min": config.MOM_TREND_MIN, "trend_pct": config.MOM_TREND_PCT,
+        "risk_pct": config.RISK_PER_TRADE * 100, "chase_ticks": config.CHASE_MAX_TICKS,
     }
     d["enabled"] = {k: st.is_on(k) for k in st.STRATEGIES}
     d["alloc"] = st.alloc()
@@ -133,18 +136,26 @@ def collect(kis, sched):
     d["names"] = config.STOCK_NAMES
     d["scalp_cfg"] = {
         "ratio": st.alloc()["scalp"], "min_change": config.SCALP_MIN_CHANGE, "vol_rate": config.SCALP_VOL_RATE,
-        "require_mom": config.SCALP_REQUIRE_MOMENTUM, "index_min": config.MOM_INDEX_MIN,
-        "stop": config.SCALP_STOP_PCT, "be_ratio": config.SCALP_BREAKEVEN_RATIO,
-        "tp": config.SCALP_TAKE_PROFIT, "loss_min": config.SCALP_LOSS_ALERT_MIN,
-        "cost": config.MOM_ROUNDTRIP_COST * 100, "pick": config.PICK_COUNT,
-        "max_buys": config.SCALP_MAX_BUYS,
+        "band": config.SCALP_VWAP_BAND * 100, "hold": config.SCALP_HOLD_CHANGE,
+        "atr_mult": config.SCALP_ATR_MULT, "r_min": config.SCALP_R_MIN, "r_max": config.SCALP_R_MAX,
+        "trail_r": config.SCALP_TRAIL_R, "be_ratio": config.SCALP_BREAKEVEN_RATIO,
+        "tp_r": config.TP_R, "tp_ratio": config.TP_RATIO, "loss_min": config.SCALP_LOSS_ALERT_MIN,
+        "cost": config.MOM_ROUNDTRIP_COST * 100, "pick": config.PICK_COUNT, "max_buys": config.SCALP_MAX_BUYS,
     }
     d["break_cfg"] = {
         "ratio": st.alloc()["break"], "days": config.BREAK_DAYS, "upper_q": config.BREAK_UPPER_Q,
         "vol_rate": config.BREAK_VOL_RATE, "f_days": config.BREAK_FOREIGN_DAYS, "f_recent": config.BREAK_FOREIGN_RECENT,
-        "max_buys": config.BREAK_MAX_BUYS, "stop": config.BREAK_STOP_PCT, "tp": config.BREAK_TAKE_PROFIT,
-        "cost": config.MOM_ROUNDTRIP_COST * 100,
+        "f_min": config.BREAK_FOREIGN_MIN_PCT, "max_buys": config.BREAK_MAX_BUYS,
+        "atr_mult": config.BREAK_ATR_MULT, "r_min": config.BREAK_R_MIN, "r_max": config.BREAK_R_MAX,
+        "trail_r": config.BREAK_TRAIL_R, "fail_days": config.BREAK_FAIL_DAYS,
+        "tp_r": config.TP_R, "tp_ratio": config.TP_RATIO, "cost": config.MOM_ROUNDTRIP_COST * 100,
     }
+    d["risk"] = {"loss_limit": config.DAILY_LOSS_LIMIT_PCT, "max_stock_pct": config.MAX_STOCK_PCT * 100,
+                 "risk_pct": config.RISK_PER_TRADE * 100}
+    if "error" not in bal:
+        d["risk"]["day"] = safe(lambda: risk.day_state(bal["total"]))
+    d["perf"] = safe(journal.stats)
+    d["trades"] = safe(lambda: journal.recent(20))
     d["break_positions"] = s.get("break_positions", {})
     bd = s.get("break_done") or {}
     d["break_done"] = bd.get("codes", []) if bd.get("date") == dt.date.today().isoformat() else []
@@ -171,31 +182,40 @@ BREAK_CAND = {"t": 0.0, "data": None}
 
 
 def mom_candidates(kis, n=5):
-    """모멘텀 선정 조건에 가까운 종목 상위 n개. 조건: 주도 섹터 / 상승 중 / 과열 아님, 순위는 거래대금."""
+    """모멘텀 선정 조건에 가까운 종목 상위 n개. 조건: 주도 섹터(중앙값) / 상승 / 장 초반 고가 돌파, 순위는 상대 강도."""
     data = daytrade._sector_rows(kis)
     if not data:
         return {"error": "대상 종목 없음 (시총 조건 미충족 또는 시세 조회 실패)"}
-    avg = {s: sum(r["change_pct"] for r in rows) / len(rows) for s, rows in data.items()}
-    lead = max(avg, key=avg.get)
+    med = daytrade.sector_scores(data)
+    lead = max(med, key=med.get)
+    idx = safe(lambda: kis.index_change("0001"))
+    idx_v = idx if isinstance(idx, (int, float)) else 0.0
     out = []
     for sector, rows in data.items():
         for r in rows:
             c_sector = sector == lead
-            c_up = r["change_pct"] > 0
-            c_hot = r["change_pct"] < config.MAX_CHANGE_PCT
+            c_up = 0 < r["change_pct"] < config.MAX_CHANGE_PCT
             out.append({"code": r["code"], "name": r["name"], "sector": sector, "price": r["price"],
-                        "change_pct": r["change_pct"], "value": r["value"],
-                        "c_sector": c_sector, "c_up": c_up, "c_hot": c_hot,
-                        "met": int(c_sector) + int(c_up) + int(c_hot)})
-    # 충족 조건 수 -> 주도 섹터 우선 -> 거래대금 순
-    out.sort(key=lambda x: (x["met"], x["c_sector"], x["value"]), reverse=True)
+                        "change_pct": r["change_pct"], "rs": round(r["change_pct"] - idx_v, 2),
+                        "c_sector": c_sector, "c_up": c_up, "c_or": None, "or_high": None})
+    # 앞 조건 수 -> 상대 강도 순으로 거른 뒤, 상위 후보만 초반 고가(분봉) 조회
+    out.sort(key=lambda x: (int(x["c_sector"]) + int(x["c_up"]), x["rs"]), reverse=True)
     top = out[:n]
+    for x in top:
+        if x["c_sector"] and x["c_up"]:
+            try:
+                x["or_high"] = kis.or_high(x["code"], config.MOM_OR_MIN) or None
+                x["c_or"] = bool(x["or_high"] and x["price"] > x["or_high"])
+            except Exception:
+                pass
     trend = daytrade.index_trend(kis)
-    for i, x in enumerate(top):
-        x["pick"] = (x["met"] == 3 and trend["trend"] != "down"
-                     and sum(1 for y in top[:i] if y["met"] == 3) < config.PICK_COUNT)
-    return {"lead": lead, "sector_avg": {k: round(v, 2) for k, v in avg.items()},
-            "index_pct": safe(lambda: kis.index_change("0001")), "trend": trend, "items": top}
+    k = 0
+    for x in top:
+        ok = x["c_sector"] and x["c_up"] and x["c_or"] and trend["trend"] != "down"
+        x["pick"] = bool(ok and k < config.PICK_COUNT)
+        k += int(bool(ok))
+    return {"lead": lead, "sector_avg": {k2: round(v, 2) for k2, v in med.items()},
+            "index_pct": idx, "trend": trend, "items": top}
 
 
 def make_handler(kis, sched, allowed_hosts):

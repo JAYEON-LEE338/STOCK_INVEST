@@ -7,6 +7,7 @@ import requests
 
 from . import config
 from . import notify
+from . import risk
 
 log = logging.getLogger("kis")
 
@@ -120,6 +121,8 @@ class KIS:
             "value": int(o.get("acml_tr_pbmn") or 0),
             "mcap": int(o.get("hts_avls") or 0),  # 시가총액(억원)
             "vol_rate": float(o.get("prdy_vrss_vol_rate") or 0),  # 전일 거래량 대비 누적 거래량(%)
+            "vwap": float(o.get("wghn_avrg_stck_prc") or 0),  # 장중 가중평균가(VWAP)
+            "high": int(o.get("stck_hgpr") or 0), "low": int(o.get("stck_lwpr") or 0),
         }
 
     def daily_closes(self, code: str, days: int = 10) -> list[int]:
@@ -151,14 +154,41 @@ class KIS:
         out = []
         for x in j.get("output2", []):
             h = x.get("stck_cntg_hour", "")
-            if x.get("stck_bsop_date") != today or not h.isdigit() or h == "888888":
+            if x.get("stck_bsop_date") != today or not h.isdigit() or len(h) != 6:
                 continue
-            out.append((dt.datetime.strptime(today + h, "%Y%m%d%H%M%S"), float(x["bstp_nmix_prpr"])))
+            try:  # 888888·999999 같은 특수 행(장 마감 후 집계 등)은 시각이 아니므로 건너뜀
+                out.append((dt.datetime.strptime(today + h, "%Y%m%d%H%M%S"), float(x["bstp_nmix_prpr"])))
+            except ValueError:
+                continue
         out.sort(reverse=True)
         return out
 
     def index_change(self, index_code: str = "0001") -> float:
         return self.index_price(index_code)["change_pct"]
+
+    def _orderbook(self, code: str) -> dict:
+        j = self._request(
+            "GET", "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", "FHKST01010200",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+        )
+        return j["output1"]
+
+    def bid_price(self, code: str, level: int = 2) -> int:
+        """매수 호가 (level=1 최우선, 2 = 두 번째로 높은 매수호가)."""
+        px = int(self._orderbook(code).get(f"bidp{level}") or 0)
+        if px <= 0:
+            raise RuntimeError(f"매수 {level}호가 없음: {code}")
+        return px
+
+    def chase_price(self, code: str) -> int:
+        """즉시 체결형 매수가: 매도 1호가, 단 현재가 + CHASE_MAX_TICKS 틱 상한."""
+        cur = self.price(code)["price"]
+        cap = cur + tick_size(cur) * config.CHASE_MAX_TICKS
+        try:
+            ask = int(self._orderbook(code).get("askp1") or 0)
+        except Exception:
+            ask = 0
+        return min(ask, cap) if ask > 0 else cap
 
     def daily_ohlc(self, code: str, days: int = 40) -> list:
         """오늘 제외 일봉 [{date, high, low, close, volume}] (최신순). 약 100거래일까지."""
@@ -176,7 +206,7 @@ class KIS:
                 for x in j.get("output2", []) if x.get("stck_bsop_date") and x["stck_bsop_date"] != today][:days]
 
     def foreign_netbuy(self, code: str, days: int = 60) -> list:
-        """외국인 일별 순매수 수량 (최신순). 한 번에 30거래일씩이라 날짜를 거슬러 올라가며 이어 받는다."""
+        """외국인 일별 순매수 [{qty, amt(백만원)}] (최신순, 오늘 제외). 한 번에 30거래일씩이라 날짜를 거슬러 올라가며 이어 받는다."""
         out, seen, end = [], set(), dt.date.today()
         for _ in range(5):
             j = self._request(
@@ -190,13 +220,25 @@ class KIS:
                 break
             for x in new:
                 seen.add(x["stck_bsop_date"])
-                out.append((x["stck_bsop_date"], int(x.get("frgn_ntby_qty") or 0)))
+                out.append((x["stck_bsop_date"], int(x.get("frgn_ntby_qty") or 0), int(x.get("frgn_ntby_tr_pbmn") or 0)))
             if len(out) >= days:
                 break
             oldest = min(x["stck_bsop_date"] for x in new)
             end = dt.datetime.strptime(oldest, "%Y%m%d").date() - dt.timedelta(days=1)
         out.sort(reverse=True)
-        return [q for _, q in out[:days]]
+        return [{"qty": q, "amt": a} for _, q, a in out[:days]]  # amt: 순매수 금액(백만원)
+
+    def or_high(self, code: str, minutes: int = 30) -> int:
+        """오늘 09:01~(09:00+minutes) 1분봉 고가의 최고값. 데이터 없으면 0."""
+        d = dt.date.today().strftime("%Y%m%d")
+        end = (dt.datetime(2000, 1, 1, 9, 0) + dt.timedelta(minutes=minutes)).strftime("%H%M%S")
+        j = self._request(
+            "GET", "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice", "FHKST03010230",
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": end,
+                    "FID_INPUT_DATE_1": d, "FID_PW_DATA_INCU_YN": "Y", "FID_FAKE_TICK_INCU_YN": ""},
+        )
+        bars = [x for x in j.get("output2", []) if x.get("stck_bsop_date") == d and "090000" < x["stck_cntg_hour"] <= end]
+        return max((int(x["stck_hgpr"]) for x in bars), default=0)
 
     def daily_bars(self, code: str, days: int = 10) -> list[dict]:
         """일봉 (최신순): date(YYYYMMDD), close, volume."""
@@ -245,18 +287,19 @@ class KIS:
                 "total": int(s["tot_evlu_amt"]) - hidden_val}
 
     # ---------- 주문 ----------
-    def order(self, side: str, code: str, qty: int, price: int = 0, exchange: str = "KRX"):
-        """side: buy/sell. price=0 이면 시장가(매수는 매수 2호가 지정가로 바뀜). DRY_RUN 이면 로그만.
+    def order(self, side: str, code: str, qty: int, price: int = 0, exchange: str = "KRX", mode: str = "bid2"):
+        """side: buy/sell. price=0 이면 시장가(매수는 시장가 금지: mode 에 따라 지정가). DRY_RUN 이면 로그만.
+        mode(매수): "bid2" 매수 2호가(역추세·눌림목) / "chase" 매도 1호가, 현재가+N틱 상한(추세 추종).
         성공 시 주문 정보 dict (truthy), 실패 시 False.
         {"odno", "orgno", "code", "side", "qty", "price", "dry"}"""
         if qty <= 0:
             return False
-        if side == "buy" and price == 0:  # 매수는 시장가 금지: 매수 2호가 지정가
+        if side == "buy" and price == 0:  # 매수는 시장가 금지
             try:
-                price = self.bid_price(code, 2)
+                price = self.chase_price(code) if mode == "chase" else self.bid_price(code, 2)
             except Exception as e:
-                log.error("매수 2호가 조회 실패로 매수 취소 %s: %s", code, e)
-                notify.send(f"⚠️ 매수 취소 {code}: 매수 2호가 조회 실패 ({e})")
+                log.error("매수 호가 조회 실패로 매수 취소 %s: %s", code, e)
+                notify.send(f"⚠️ 매수 취소 {code}: 호가 조회 실패 ({e})")
                 return False
         info = self.price(code)
         ref_price = price or info["price"]
@@ -269,6 +312,13 @@ class KIS:
                 return False
             if self._daily_used() + amount > config.MAX_DAILY_AMOUNT:
                 log.error("일일 주문 한도 초과로 거부: %s", code)
+                return False
+            try:  # 하루 손실 한도(킬 스위치), 종목당 노출 한도
+                ok, why = risk.check_buy(self.balance(), code, amount)
+            except Exception as e:
+                ok, why = False, f"위험 검사 실패: {e}"
+            if not ok:
+                log.warning("매수 거부 %s: %s", code, why)
                 return False
 
         tag = f"[{'DRY' if config.DRY_RUN else config.MODE}] {side} {code} x{qty} @{price or '시장가'} ({exchange})"
