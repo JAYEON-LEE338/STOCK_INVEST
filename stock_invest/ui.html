@@ -63,7 +63,7 @@ pre{margin:0;max-height:300px;overflow:auto;font:12px/1.5 Consolas,monospace;whi
   <h1>NATURE STOCK INVESTMENT</h1>
   <div class="badges" id="badges"></div>
 </header>
-<div class="tabs"><button class="tab" data-tab="main">대시보드</button><button class="tab" data-tab="fear">공포지수</button><button class="tab" data-tab="box">박스권</button><button class="tab" data-tab="mom">모멘텀</button><button class="tab" data-tab="scalp">눌림목</button><button class="tab" data-tab="break">돌파</button></div>
+<div class="tabs"><button class="tab" data-tab="main">대시보드</button><button class="tab" data-tab="fear">공포지수</button><button class="tab" data-tab="box">박스권</button><button class="tab" data-tab="mom">모멘텀</button><button class="tab" data-tab="scalp">눌림목</button><button class="tab" data-tab="break">돌파</button><button class="tab" data-tab="fish">FISHING</button></div>
 <div class="grid" id="grid"><div class="card">불러오는 중…</div></div>
 <footer class="bottombar">
   <div><span class="muted" id="now"></span> <button class="ghost" id="refresh">새로고침</button> <button class="ghost" id="pwBtn">비밀번호 변경</button> <a href="/logout" class="muted" style="font-size:12px">로그아웃</a></div>
@@ -108,7 +108,7 @@ function boxCard(b){
       <div class="edge" style="left:${x(1)}%"><b>상단</b><span>${num(b.upper,0)}</span></div>
       <div class="marker" style="left:${x(b.pos)}%"><i>${num(b.current,0)}</i></div>
     </div>
-    <div class="legend"><span><s style="background:var(--buyzone)"></s>매수 구간 (위치 ≤ ${(b.buy_pos*100).toFixed(0)}%, 15:20 종가)</span>
+    <div class="legend"><span><s style="background:var(--buyzone)"></s>매수 구간 (위치 ≤ ${(b.buy_pos*100).toFixed(0)}%, 09:30~15:20 10분 간격)</span>
     <span><s style="background:var(--sellzone)"></s>매도 구간 (${b.ladder.map(t=>(t*100).toFixed(0)+'%').join(' / ')} 도달마다 25%)</span>
     <span>박스 폭 ${(b.width*100).toFixed(1)}%</span></div>
     <div class="boxform"><span class="muted">박스권 직접 설정</span>
@@ -132,7 +132,7 @@ function sigCard(title, sig, extra){
 }
 
 let TAB = 'main';
-try { const t = localStorage.getItem('tab'); TAB = ['fear','box','mom','scalp','break'].includes(t) ? t : 'main'; } catch(e) {}
+try { const t = localStorage.getItem('tab'); TAB = ['fear','box','mom','scalp','break','fish'].includes(t) ? t : 'main'; } catch(e) {}
 
 const trendTxt = t => !t || t.trend==='unknown' ? '<span class="muted">기록 부족 (판단 보류)</span>' : `${pct(t.pct)} <span class="badge ${t.trend==='up'?'b-ok':t.trend==='down'?'b-bad':'b-warn'}">${{up:'상승',down:'하락 — 매수 제외',flat:'보합'}[t.trend]}</span>`;
 let CAND = {t: 0, data: null, loading: false};
@@ -186,25 +186,25 @@ function momCards(d){
   const kospiOk = typeof d.kospi === 'number', kOk = kospiOk && d.kospi >= c.index_min;
   const sg = (d.signals || {}).momentum || {};
   out.push(`<div class="card wide" id="candCard"><h2>선정 조건 근접 종목 TOP 5 (상대 강도 순)</h2>${candHtml(d)}</div>`);
-  out.push(`<div class="card"><h2>① 매수 조건 (10:01, 모두 충족)</h2>
+  out.push(`<div class="card"><h2>① 매수 조건 (09:30~14:50, 10분 간격, 모두 충족)</h2>
     <div class="rule"><b>1</b><span>코스피 전일 대비 <b>+${c.index_min}% 이상</b>${kospiOk?` · 현재 ${pct(d.kospi)} <span class="badge ${kOk?'b-ok':'b-warn'}">${kOk?'충족':'미달'}</span>`:''}</span></div>
     <div class="rule"><b>2</b><span><b>주도 섹터</b>(등락률 중앙값 1위) 소속, 상승 중, 과열(${c.max_change}%↑) 제외</span></div>
     <div class="rule"><b>3</b><span>지수 추세: 최근 ${c.trend_min}분 -${c.trend_pct}% 이하 하락 추세면 제외</span></div>
     <div class="rule"><b>4</b><span><b>장 초반 ${c.or_min}분 고가 돌파</b>: 현재가 > 09:01~09:${String(c.or_min).padStart(2,'0')} 고가</span></div>
-    <div class="rule"><b>5</b><span><b>상대 강도</b>(종목 등락률 − 코스피) 상위 ${c.pick}종목 · <b>즉시 체결형 지정가</b>(매도 1호가, 현재가+${c.chase_ticks}틱 상한)</span></div></div>`);
+    <div class="rule"><b>5</b><span><b>상대 강도</b>(종목 등락률 − 코스피) 상위 · <b>하루 최대 2종목</b>(같은 종목 재매수 금지) · <b>즉시 체결형 지정가</b>(매도 1호가, 현재가+${c.chase_ticks}틱 상한)</span></div></div>`);
   out.push(`<div class="card"><h2>② 위험 단위 · 투자 금액</h2>
     <div class="row"><span class="muted">R (위험 단위)</span><span>ATR × ${c.atr_mult} (${c.r_min}~${c.r_max}%)</span></div>
     <div class="row"><span class="muted">수량</span><span>손절 시 계좌 손실 ${c.risk_pct}% 가 되도록</span></div>
     <div class="row"><span class="muted">예산</span><span>모멘텀·단타 공용 ${(c.budget_ratio*100).toFixed(0)}%${!isErr(b)?' · '+won(Math.floor(b.total*c.budget_ratio)):''}</span></div>
     <div class="row"><span class="muted">수익률 계산</span><span>왕복 수수료·세금 ${c.cost.toFixed(2)}% 차감</span></div></div>`);
-  out.push(`<div class="card wide"><h2>③ 청산 (10:02~15:19, 1분 감시, 시장가 · 비율은 최초 수량 기준)</h2>
+  out.push(`<div class="card wide"><h2>③ 청산 (09:31~15:19, 1분 감시, 시장가 · 비율은 최초 수량 기준)</h2>
     <div class="rule"><b>-1R</b><span>이하 → <b>${(c.stop_ratio*100).toFixed(0)}%</b> (1차 손절), ${c.stop2_wait}분 뒤에도 -1R 이하면 <b>나머지 전량</b></span></div>
     <div class="rule"><b>0%</b><span>${d.be_arm}% 이하까지 내려갔다가 본전 회복 → <b>${(c.be_ratio*100).toFixed(0)}%</b></span></div>
     <div class="rule"><b>+${c.tp_r}R</b><span>이상 → <b>${(c.tp_ratio*100).toFixed(0)}%</b> 익절</span></div>
     <div class="rule"><b>추적</b><span>익절 후 진입 후 최고가 − ${c.trail_r}R 아래로 내려오면 <b>나머지 전량</b></span></div>
     <div class="rule"><b>15:15</b><span>남은 수량 정규장 전량 청산 · 실패분만 19:30 NXT(현재가 -${c.nxt_ticks}틱) / 다음날 09:05 정리</span></div></div>`);
   out.push(`<div class="card wide"><h2>모멘텀 보유 현황</h2>${rPosTable(d, d.mom_positions, c.cost, p => p.qty > 0, '보유 중인 모멘텀 종목 없음')}</div>`);
-  out.push(sigCard('최근 판단 · 모멘텀 전략 (10시)', sg, sg.index_pct!==undefined ? `<div class="row"><span class="muted">코스피 등락률</span><span>${pct(sg.index_pct)}</span></div>` : ''));
+  out.push(sigCard('최근 판단 · 모멘텀 전략', sg, sg.index_pct!==undefined ? `<div class="row"><span class="muted">코스피 등락률</span><span>${pct(sg.index_pct)}</span></div>` : ''));
   out.push(logCard(d, /모멘텀|daytrade:/));
   return out;
 }
@@ -242,7 +242,7 @@ function scalpCards(d){
     <div class="rule"><b>1</b><span>전일 대비 <b>+${c.min_change}% 이상</b> 급등 (과열 20%↑ 제외)</span></div>
     <div class="rule"><b>2</b><span>누적 거래량 <b>전일의 ${c.vol_rate}% 이상</b></span></div>
     <div class="muted" style="font-size:12px;margin-top:4px">급등 직후 추격하지 않습니다. 급등주는 고가 대비 평균 2~3%p 되밀려 끝나는 경향이 있습니다.</div></div>`);
-  out.push(`<div class="card"><h2>② 매수 (10:05~13:55, 5분 간격)</h2>
+  out.push(`<div class="card"><h2>② 매수 (09:30~14:50, 10분 간격)</h2>
     <div class="rule"><b>눌림</b><span>현재가 ≤ <b>VWAP × ${(1+c.band/100).toFixed(2)}</b> (장중 평균가 근처까지 조정)</span></div>
     <div class="rule"><b>반등</b><span>그 뒤 현재가 ≥ VWAP×1.003 이고 직전 확인가보다 상승</span></div>
     <div class="rule"><b>유지</b><span>등락률 여전히 <b>+${c.hold}% 이상</b>, 지수 하락 추세 아님</span></div>
@@ -287,11 +287,11 @@ function breakTab(d){
   const c = d.break_cfg, b = d.balance, out = [];
   const sg = (d.signals || {})['break'] || {};
   out.push(`<div class="card wide" id="breakCard"><h2>돌파 후보 TOP 5</h2>${breakTable(d)}</div>`);
-  out.push(`<div class="card"><h2>① 매수 (15:20 종가 단일가, 모두 충족)</h2>
+  out.push(`<div class="card"><h2>① 매수 (09:30~15:20, 10분 간격, 모두 충족)</h2>
     <div class="rule"><b>1</b><span>외국인: 최근 ${c.f_days}거래일 순매수 <b>금액 누적 > 0</b>(시총 대비 ${c.f_min}% 이상), 최근 ${c.f_recent}일 순매수 > 0 (누적 증가 중)</span></div>
     <div class="rule"><b>2</b><span>${c.days}일 박스 돌파: 현재가 > 최근 ${c.days}거래일 ${c.upper_q>=1?'<b>최고가</b>':`고가 ${(c.upper_q*100).toFixed(0)}백분위`}</span></div>
     <div class="rule"><b>3</b><span>누적 거래량 <b>전일의 ${c.vol_rate}% 이상</b></span></div>
-    <div class="rule"><b>4</b><span><b>종가 확인</b>: 15:20 단일가에서 재확인 후 즉시 체결형 지정가(현재가 + 최대 3틱) · 하루 최대 ${c.max_buys}종목</span></div>
+    <div class="rule"><b>4</b><span>즉시 체결형 지정가(현재가 + 최대 3틱, 장중 주문은 10분 미체결 시 취소) · 하루 최대 ${c.max_buys}종목 · 15:20 은 종가 단일가</span></div>
     ${!isErr(b)?`<div class="row"><span class="muted">돌파매매 예산 (총평가의 ${(c.ratio*100).toFixed(0)}%)</span><span>${won(Math.floor(b.total*c.ratio))}</span></div>`:''}</div>`);
   out.push(`<div class="card"><h2>② 청산 (09:05~15:19, 1분 감시) — R = ATR × ${c.atr_mult} (${c.r_min}~${c.r_max}%)</h2>
     <div class="rule"><b>-1R</b><span>이하 → <b>전량</b> 손절</span></div>
@@ -302,6 +302,61 @@ function breakTab(d){
     ${rPosTable(d, d.break_positions, c.cost, p => p.qty > 0, '보유 중인 돌파매매 종목 없음')}</div>`);
   out.push(sigCard('최근 판단 · 돌파매매', sg, ''));
   out.push(logCard(d, /돌파|breakout/));
+  return out;
+}
+
+// ---------------------------------------------------------------- FISHING (오전 급락주 반등)
+let FS = {t: 0, data: null, loading: false};
+function fishTable(d){
+  const c = FS.data;
+  if (!c) return '<span class="muted">불러오는 중…</span>';
+  if (isErr(c)) return errTxt(c);
+  const cf = d.fish_cfg;
+  const rows = c.items.map(i => `<tr><td>${i.pick?'<b>매수 대상</b>':i.bought?'오늘 매수함':i.excluded?`<span class="muted">제외(${cf.exclude}% 이하)</span>`:''}</td><td>${stockLink(i.name, i.code)}</td>
+    <td class="n">${won(i.price)}</td><td class="n">${pct(i.change_pct)}</td><td class="n">${pct(i.low_pct)}</td>
+    <td class="n">${i.frgn>0?'<span class="up">+':'<span class="down">'}${Number(i.frgn).toLocaleString('ko-KR')}</span></td>
+    <td>${okDot(i.c_drop)} 오전 ${cf.drop}% 급락 ${okDot(i.c_rebound)} ${cf.buy_at}% 반등 ${okDot(i.c_nochase)} ${cf.buy_max}% 이하 ${okDot(i.c_frgn)} 외국인 순매수</td></tr>`).join('');
+  return `<div class="row"><span class="muted">FISHING 비중 / 오늘 급락 후보</span><span>${(c.ratio*100).toFixed(0)}%${c.ratio<=0?' <span class="badge b-warn">0% — 대시보드 투자 비중에서 설정해야 매수합니다</span>':''} / ${c.watch_count}종목</span></div>
+    <div class="tblwrap"><table><tr><th></th><th>종목</th><th class="n">현재가</th><th class="n">등락률</th><th class="n">장중 저가</th><th class="n">외국인 순매수(주)</th><th>조건</th></tr>${rows}</table></div>`;
+}
+async function loadFish(d){
+  if (FS.loading || Date.now() - FS.t < 30000) return;
+  FS.loading = true;
+  try {
+    FS.data = await (await fetch('/api/fish_candidates')).json();
+    FS.t = Date.now();
+    const el = $('#fishCard');
+    if (el && TAB === 'fish') el.innerHTML = '<h2>FISHING 후보 TOP 5 (장중 저가 하락이 깊은 순)</h2>' + fishTable(d);
+  } catch(e) {} finally { FS.loading = false; }
+}
+function fishTab(d){
+  const c = d.fish_cfg, b = d.balance, out = [], today = d.now.slice(0,10);
+  const sg = (d.signals || {}).fish || {};
+  out.push(`<div class="card wide" id="fishCard"><h2>FISHING 후보 TOP 5 (장중 저가 하락이 깊은 순)</h2>${fishTable(d)}</div>`);
+  out.push(`<div class="card"><h2>① 매수 (09:05~14:30, 1분 간격, 모두 충족)</h2>
+    <div class="rule"><b>1</b><span><b>오전장(${c.morning_end} 이전)</b> 장중 저가가 전일 종가 대비 <b>${c.drop}% 이하</b>로 급락 (5분 간격 스캔), 단 <b>${c.exclude}% 이하까지 떨어진 종목은 제외</b></span></div>
+    <div class="rule"><b>2</b><span>반등해서 등락률 <b>${c.buy_at}% 이상</b> (저가에서 3%p 이상 상승) · 추격 방지: <b>${c.buy_max}% 이하</b></span></div>
+    <div class="rule"><b>3</b><span><b>당일 외국인 순매수 수량 > 0</b> (장중 추정치)</span></div>
+    <div class="rule"><b>4</b><span>하루 최대 ${c.max_buys}종목 · 종목당 1회 · 즉시 체결형 지정가 · 수량은 저가 이탈까지 거리를 위험 단위로 계산</span></div>
+    ${!isErr(b)?`<div class="row"><span class="muted">FISHING 예산 (총평가의 ${(c.ratio*100).toFixed(0)}%)</span><span>${won(Math.floor(b.total*c.ratio))}</span></div>`:''}</div>`);
+  out.push(`<div class="card"><h2>② 매도 (1분 감시, 시장가 · 비율은 최초 수량 기준)</h2>
+    <div class="rule"><b>${c.tp1_at}%</b><span>등락률 회복 → <b>${(c.tp1_ratio*100).toFixed(0)}%</b> 매도</span></div>
+    <div class="rule"><b>${c.tp2_at}%</b><span>전일 종가 회복 → <b>나머지 전량</b></span></div>
+    <div class="rule"><b>손절</b><span>가격이 <b>장중 저가 아래로</b> 내려가면 전량</span></div>
+    <div class="rule"><b>15:15</b><span>남은 수량 전량 정리 (오버나이트 없음)</span></div></div>`);
+  const fp = d.fish_positions || {}, held = isErr(b) ? {} : b.holdings;
+  const rows = Object.entries(fp).filter(([,p]) => p.date === today).map(([code,p]) => {
+    const h = held[code], px = h ? h.price : null;
+    const pnl = px && p.entry ? (px/p.entry - 1 - c.cost/100)*100 : null;
+    return `<tr><td>${stockLink(h?h.name:((d.names||{})[code]||code), code)}</td><td>${esc((p.time||'').slice(11,16))}</td>
+      <td class="n">${p.entry?won(Math.round(p.entry)):'-'}</td><td class="n">${px?won(px):'-'}</td><td class="n">${pnl===null?'-':pct(pnl)}</td>
+      <td class="n">${p.day_low?won(p.day_low):'-'}</td><td class="n">${p.qty}/${p.base_qty}</td><td>${esc((p.steps||[]).join(', ')||'-')}</td></tr>`;
+  }).join('');
+  out.push(`<div class="card wide"><h2>오늘 FISHING (${Object.values(fp).filter(p=>p.date===today).length}/${c.max_buys}종목)</h2>${rows
+    ?`<div class="tblwrap"><table><tr><th>종목</th><th>매수</th><th class="n">매수가</th><th class="n">현재가</th><th class="n">수익률</th><th class="n">손절선(장중 저가)</th><th class="n">잔량/최초</th><th>실행 단계</th></tr>${rows}</table></div>`
+    :'<span class="muted">오늘 매수한 종목 없음</span>'}</div>`);
+  out.push(sigCard('최근 판단 · FISHING', sg, ''));
+  out.push(logCard(d, /FISHING|fishing:/));
   return out;
 }
 
@@ -318,7 +373,7 @@ function riskCard(d){
 function perfCard(d){
   const p = d.perf;
   if (!p || isErr(p)) return `<div class="card wide"><h2>전략별 성과</h2>${p?errTxt(p):''}</div>`;
-  const names = {fear: '공포지수', box: '박스권', mom: '모멘텀', scalp: '눌림목', 'break': '돌파매매', all: '전체'};
+  const names = {fear: '공포지수', box: '박스권', mom: '모멘텀', scalp: '눌림목', 'break': '돌파매매', fish: 'FISHING', all: '전체'};
   const f = (v, s='') => v===null||v===undefined ? '-' : v + s;
   const rows = Object.keys(names).map(k => { const x = p[k] || {}; return `<tr${k==='all'?' style="font-weight:600"':''}><td>${names[k]}</td>
     <td class="n">${x.trades||0}</td><td class="n">${f(x.win_rate,'%')}</td><td class="n">${x.avg_win_pct==null?'-':pct(x.avg_win_pct)}</td>
@@ -332,7 +387,7 @@ function perfCard(d){
     <h2 style="margin-top:14px">최근 체결</h2>${tr?`<div class="tblwrap"><table><tr><th>시각</th><th>전략</th><th>구분</th><th>종목</th><th class="n">수량</th><th class="n">가격</th><th class="n">수익률</th><th></th></tr>${tr}</table></div>`:'<span class="muted">아직 체결 기록이 없습니다</span>'}</div>`;
 }
 
-const LABELS = {fear: '공포지수', box: '박스권', mom: '모멘텀', scalp: '눌림목(단타)', break: '돌파매매'};
+const LABELS = {fear: '공포지수', box: '박스권', mom: '모멘텀', scalp: '눌림목(단타)', break: '돌파매매', fish: 'FISHING'};
 const pnlOf = (px, entry, cost) => px && entry ? (px / entry - 1 - cost / 100) * 100 : null;
 function logCard(d, re){
   const lines = (d.logs||[]).filter(l => re.test(l));
@@ -352,6 +407,7 @@ function posRows(d){
   Object.entries(d.mom_positions||{}).filter(([,p])=>p.qty>0).forEach(([c,p]) => add('모멘텀', c, p, p.entry));
   Object.entries(d.scalp_positions||{}).filter(([,p])=>p.date===today && p.qty>0).forEach(([c,p]) => add('눌림목', c, p, p.entry));
   Object.entries(d.break_positions||{}).filter(([,p])=>p.qty>0).forEach(([c,p]) => add('돌파', c, p, p.entry));
+  Object.entries(d.fish_positions||{}).filter(([,p])=>p.date===today && p.qty>0).forEach(([c,p]) => add('FISHING', c, p, p.entry));
   return out.map(r => ({...r, pnl: pnlOf(r.price, r.entry, r.tag==='공포지수'?0:cost)}));
 }
 function posTable(rows, empty){
@@ -403,7 +459,7 @@ function scheduleCard(d){
 
 function overviewCards(d){
   const rows = posRows(d), out = [accountCard(d), marketCard(d), riskCard(d)];
-  const AK = {fear: '공포지수', box: '박스권', momscalp: '모멘텀·단타 (공용)', break: '돌파매매'};
+  const AK = {fear: '공포지수', box: '박스권', momscalp: '모멘텀·단타 (공용)', break: '돌파매매', fish: 'FISHING'};
   const tot = Object.keys(AK).reduce((a, k) => a + d.alloc[k], 0) * 100;
   out.push(`<div class="card wide"><h2>전략 ON / OFF</h2>${Object.keys(LABELS).map(k => { const on=(d.enabled||{})[k]!==false;
     return `<div class="row" style="align-items:center"><span>${LABELS[k]}</span><span><span class="badge ${on?'b-ok':'b-warn'}">${on?'ON':'OFF'}</span>
@@ -415,7 +471,7 @@ function overviewCards(d){
     <div class="muted" style="font-size:12px;margin-top:4px">모멘텀과 단타는 하나의 예산을 함께 씁니다. 한쪽이 쓴 만큼 다른 쪽이 쓸 수 있는 여유가 줄어듭니다.</div>
     <div class="row" style="margin-top:8px;align-items:center"><span class="muted">합계 <b id="allocSum">${tot.toFixed(0)}</b>% · 현금 <b id="allocCash">${(100-tot).toFixed(0)}</b>%</span>
     <span><span class="err" id="allocErr"></span> <button id="allocSave">비중 저장</button> <button class="ghost" id="allocReset">기본값으로</button></span></div></div>`);
-  const groups = ['공포지수','박스권','모멘텀','눌림목','돌파'].map(t => {
+  const groups = ['공포지수','박스권','모멘텀','눌림목','돌파','FISHING'].map(t => {
     const r = rows.filter(x => x.tag === t);
     return `<div class="row"><span class="muted">${t}</span><span>${r.length?r.map(x=>esc(x.name)).join(', '):'보유 없음'}</span></div>`;
   }).join('');
@@ -427,7 +483,7 @@ function overviewCards(d){
 
 function fearTab(d){
   const f = d.fear || {}, fc = d.fear_cfg, out = [marketCard(d)];
-  out.push(`<div class="card"><h2>① 조건 (15:10, 하루 1회)</h2>
+  out.push(`<div class="card"><h2>① 조건 (09:30~15:20, 10분 간격 · 매수·매도 각각 하루 1회)</h2>
     <div class="rule"><b>매수</b><span>VIX <b>≥ ${d.vix_buy}</b> → 공포 예산의 <b>${(fc.tranche*100).toFixed(0)}%</b>씩 분할 매수 (매수 2호가 지정가, 예산 한도 내)</span></div>
     <div class="rule"><b>매도</b><span>VIX <b>≤ ${d.vix_sell_ladder[0]}</b> 부터, 단계(${d.vix_sell_ladder.join(', ')}) 처음 도달할 때마다 최대 보유량의 <b>${(fc.step_ratio*100).toFixed(0)}%</b>, 하루 1단계</span></div>
     <div class="rule"><b>대상</b><span>${esc((d.cc&&d.cc.name)||'KODEX 200 커버드콜 액티브')} (${esc(d.covered_call_code)})</span></div>
@@ -444,7 +500,7 @@ function fearTab(d){
 
 function boxTab(d){
   const bc = d.box_cfg, out = [boxCard(d.box)];
-  out.push(`<div class="card"><h2>① 매수 (15:20 종가 단일가)</h2>
+  out.push(`<div class="card"><h2>① 매수 (09:30~15:20, 10분 간격 · 하루 1회)</h2>
     <div class="rule"><b>조건</b><span>박스 내 위치 <b>${(d.box?d.box.buy_pos*100:10).toFixed(0)}% 이하</b> (박스 폭 ${(bc.min_width*100).toFixed(0)}% 이상일 때만, 하단 -10% 넘게 이탈하면 매수 안 함)</span></div>
     <div class="rule"><b>대상</b><span>${esc((d.cc&&d.cc.name)||'KODEX 200 커버드콜 액티브')} (${esc(d.covered_call_code)}) · 매수 2호가 지정가</span></div>
     <div class="row"><span class="muted">박스권 예산</span><span>${isErr(d.balance)?'-':won(Math.floor(d.balance.total*d.alloc.box))} (${(d.alloc.box*100).toFixed(0)}%)</span></div></div>`);
@@ -503,6 +559,7 @@ function render(d){
   });
   const b = d.balance;
   const show = cards => { $('#grid').innerHTML = cards.join(''); bind(d); };
+  if (TAB === 'fish') { show(fishTab(d)); loadFish(d); return; }
   if (TAB === 'break') { show(breakTab(d)); loadBreak(d); return; }
   if (TAB === 'scalp') { show(scalpCards(d)); loadScalp(d); return; }
   if (TAB === 'mom') { show(momCards(d)); loadCand(d); return; }

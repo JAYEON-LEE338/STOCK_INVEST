@@ -10,7 +10,7 @@ import logging
 from . import config
 
 log = logging.getLogger("journal")
-LABEL = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "단타", "break": "돌파매매"}
+LABEL = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "단타", "break": "돌파매매", "fish": "FISHING"}
 
 
 def _file():

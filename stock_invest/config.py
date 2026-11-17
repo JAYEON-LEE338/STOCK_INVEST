@@ -113,6 +113,20 @@ TP_R = 2.0  # 1차 익절 지점 (R 배수)
 TP_RATIO = 0.5  # 1차 익절 매도 비율
 CHASE_MAX_TICKS = 3  # 즉시 체결형 매수: 매도 1호가로 사되 현재가 + 이 틱 수를 넘지 않음
 
+# FISHING — 오전 급락주 반등 (별도 비중, 기본 0% = 대시보드에서 설정해야 동작)
+import datetime as _dt
+FISH_RATIO = 0.0
+FISH_DROP_PCT = -8.0  # 오전장 장중 저가가 전일 종가 대비 이 % 이하면 급락 후보
+FISH_EXCLUDE_PCT = -11.0  # 장중 저가가 이 % 이하까지 떨어진 종목은 제외 (낙폭이 너무 큼)
+FISH_MORNING_END = _dt.time(12, 0)  # 오전장 기준
+FISH_BUY_AT = -5.0  # 반등해서 등락률이 이 % 이상이 되면 매수 (저가 -8% 에서 +3%p)
+FISH_BUY_MAX = -3.0  # 등락률이 이 % 보다 높으면 추격하지 않음
+FISH_TP1_AT = -1.0  # 등락률 -1% 회복 시 1차 매도
+FISH_TP1_RATIO = 0.5
+FISH_TP2_AT = 0.0  # 전일 종가 회복 시 나머지 매도
+FISH_MAX_BUYS = 2  # 하루 최대 매수 종목 수
+FISH_R_MIN = 1.5  # 위험 단위 최소(%) — 매수가에서 장중 저가까지 거리가 이보다 작아도 이 값으로 수량 계산
+
 # 돌파매매 (별도 비중, 기본 0% = 대시보드에서 설정해야 동작)
 BREAK_RATIO = 0.0
 BREAK_UPPER_Q = 1.0  # 20일 고가의 이 분위수를 넘으면 돌파 (1.0 = 20일 최고가, 0.95 = 코스피 박스와 동일 기준)
@@ -149,6 +163,7 @@ MOM_R_MIN, MOM_R_MAX = 1.5, 6.0
 MOM_TRAIL_R = 1.0  # 1차 익절 후 최고가 - 1R 이탈 시 나머지 매도
 MOM_OR_MIN = 30  # 장 초반 고가 산정 구간(분): 09:01~09:30
 MOM_EXIT_CLOSE = True  # 15:15 정규장에서 남은 수량 전량 청산 (NXT 는 보조)
+MOM_MAX_BUYS = 2  # 모멘텀 하루 최대 매수 종목 수 (10분마다 판단하므로)
 MOM_PM_ENABLED = False  # 오후 재매수 (폐지)
 MOM_ROUNDTRIP_COST = 0.0025  # 왕복 수수료+세금 (수익률 계산 시 차감)
 MOM_STOP_RATIO = 0.50  # 손절 시 매도 비율 (최초 수량 기준)

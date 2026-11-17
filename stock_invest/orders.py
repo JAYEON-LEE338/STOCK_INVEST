@@ -15,11 +15,11 @@ from .kis_client import KIS
 
 log = logging.getLogger("orders")
 
-POS_KEY = {"box": "box_positions", "mom": "mom_positions", "scalp": "scalp_positions", "break": "break_positions"}
-CANCELABLE = ("mom", "scalp")  # 박스권·돌파(종가 단일가), 공포지수는 취소하지 않음
+POS_KEY = {"box": "box_positions", "mom": "mom_positions", "scalp": "scalp_positions", "break": "break_positions", "fish": "fish_positions"}
+CANCELABLE = ("mom", "scalp", "break", "fish")  # 박스권·공포지수는 취소하지 않음. 15:20 이후(종가 단일가) 주문도 취소 안 함
 EXPIRE_AT = dt.time(15, 35)  # 이 시각 이후 남은 정규장 주문은 만료로 처리
 NXT_EXPIRE_AT = dt.time(20, 1)  # NXT 애프터마켓 종료(20:00) 이후
-LABEL = {"box": "박스권", "mom": "모멘텀", "scalp": "초단타", "fear": "공포지수", "break": "돌파매매"}
+LABEL = {"box": "박스권", "mom": "모멘텀", "scalp": "초단타", "fear": "공포지수", "break": "돌파매매", "fish": "FISHING"}
 
 
 def _today() -> str:
@@ -218,7 +218,8 @@ def sync(kis: KIS) -> None:
             continue
         # 모멘텀·초단타는 일정 시간 지나면 잔량 취소
         age = (now - dt.datetime.fromisoformat(o["time"])).total_seconds() / 60
-        if o["status"] == "open" and o["strategy"] in CANCELABLE and age >= config.BUY_CANCEL_MIN:
+        closing = o["time"][11:16] >= "15:20"  # 종가 단일가 주문은 장 마감 체결을 기다림
+        if o["status"] == "open" and o["strategy"] in CANCELABLE and not closing and age >= config.BUY_CANCEL_MIN:
             try:
                 kis.cancel(o["orgno"], odno)
                 o["status"] = "cancel_sent"

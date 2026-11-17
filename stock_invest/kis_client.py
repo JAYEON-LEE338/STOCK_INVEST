@@ -123,6 +123,8 @@ class KIS:
             "vol_rate": float(o.get("prdy_vrss_vol_rate") or 0),  # 전일 거래량 대비 누적 거래량(%)
             "vwap": float(o.get("wghn_avrg_stck_prc") or 0),  # 장중 가중평균가(VWAP)
             "high": int(o.get("stck_hgpr") or 0), "low": int(o.get("stck_lwpr") or 0),
+            "base": int(o.get("stck_sdpr") or 0),  # 기준가(전일 종가)
+            "frgn_net": int(o.get("frgn_ntby_qty") or 0),  # 당일 외국인 순매수 수량(장중 추정)
         }
 
     def daily_closes(self, code: str, days: int = 10) -> list[int]:

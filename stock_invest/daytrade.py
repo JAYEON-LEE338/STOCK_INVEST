@@ -67,10 +67,15 @@ def _save_signal(kind: str, sig: dict) -> None:
 
 # ---------------------------------------------------------------- 박스권
 def box_buy(kis: KIS) -> None:
-    """15:20 - 코스피가 박스 하단에 가까우면 종가 단일가에 매수 (매수 2호가 지정가)."""
+    """09:30~15:20 (10분 간격) - 코스피가 박스 하단에 가까우면 매수 (매수 2호가 지정가, 하루 1회)."""
+    if not (dt.time(9, 30) <= dt.datetime.now().time() < dt.time(15, 25)):
+        return
     if not st.is_on("box"):
         log.info("박스권 전략 OFF - 매수 판단 건너뜀")
         return
+    prev = st.load()["signals"].get("box") or {}
+    if prev.get("date") == _today() and prev.get("items"):
+        return  # 오늘 이미 매수함 (하루 1회)
     b = boxmod.get(kis)
     sig = {"date": _today(), "pos": round(b["pos"], 3), "items": [], "result": ""}
     if not b["valid"]:
@@ -205,6 +210,11 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     if not st.is_on("mom"):
         log.info("모멘텀 전략 OFF - 매수 판단 건너뜀")
         return False
+    s0 = st.load()
+    bought_today = {c for c, p in s0["mom_positions"].items() if p.get("date") == _today()}
+    remain = config.MOM_MAX_BUYS - len(bought_today)
+    if remain <= 0:
+        return False  # 오늘 매수 한도 소진 (로그·신호 갱신 없이 조용히 종료)
     idx = kis.index_price("0001")["change_pct"]
     tr = index_trend(kis)
     sig = {"date": _today(), "time": dt.datetime.now().strftime("%H:%M"), "index_pct": idx,
@@ -233,8 +243,8 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
     s = st.load()
     cands = []
     for r in data[lead]:
-        if not (0 < r["change_pct"] < config.MAX_CHANGE_PCT):
-            continue
+        if r["code"] in bought_today or not (0 < r["change_pct"] < config.MAX_CHANGE_PCT):
+            continue  # 오늘 이미 산 종목은 다시 사지 않음
         try:
             orh = kis.or_high(r["code"], config.MOM_OR_MIN)  # 장 초반 30분 고가
         except Exception as e:
@@ -244,7 +254,7 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
             continue  # 초반 고가를 돌파하지 못함
         cands.append({**r, "or_high": orh, "rs": round(r["change_pct"] - idx, 2)})
     cands.sort(key=lambda r: r["rs"], reverse=True)  # 상대 강도 순
-    picks = cands[: config.PICK_COUNT]
+    picks = cands[: min(config.PICK_COUNT, remain)]
     if not picks:
         return done(f"주도 섹터({lead})에 장 초반 30분 고가를 돌파한 상승 종목 없음")
 
@@ -274,7 +284,10 @@ def _momentum_entry(kis: KIS, kind: str) -> bool:
 
 
 def momentum_buy(kis: KIS) -> None:
-    """10:01 - 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님 & 장 초반 30분 고가 돌파 → 상대 강도 상위 매수."""
+    """09:30~14:50 (10분 간격) - 코스피 +1% & 주도 섹터 & 지수 하락 추세 아님 & 장 초반 30분 고가 돌파
+    → 상대 강도 상위 매수 (하루 최대 MOM_MAX_BUYS 종목, 같은 종목 재매수 금지)."""
+    if not (dt.time(9, 30) <= dt.datetime.now().time() < dt.time(15, 0)):
+        return
     _momentum_entry(kis, "am")
 
 
@@ -292,9 +305,9 @@ def momentum_buy_pm(kis: KIS) -> None:
 
 
 def momentum_monitor(kis: KIS) -> None:
-    """10:02~15:19 - 모멘텀 보유 종목 손절/본전/익절/추적 손절 (1분 간격, R 기준)."""
+    """09:31~15:19 - 모멘텀 보유 종목 손절/본전/익절/추적 손절 (1분 간격, R 기준)."""
     now = dt.datetime.now().time()
-    if not (dt.time(10, 2) <= now < dt.time(15, 20)):
+    if not (dt.time(9, 31) <= now < dt.time(15, 20)):
         return
     s = st.load()
     todo = {c: p for c, p in s["mom_positions"].items()

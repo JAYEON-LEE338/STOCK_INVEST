@@ -20,6 +20,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from stock_invest import box as boxmod
 from stock_invest import breakout
+from stock_invest import fishing
 from stock_invest import config
 from stock_invest import journal
 from stock_invest import risk
@@ -156,6 +157,13 @@ def collect(kis, sched):
         d["risk"]["day"] = safe(lambda: risk.day_state(bal["total"]))
     d["perf"] = safe(journal.stats)
     d["trades"] = safe(lambda: journal.recent(20))
+    d["fish_cfg"] = {
+        "ratio": st.alloc()["fish"], "drop": config.FISH_DROP_PCT, "morning_end": config.FISH_MORNING_END.strftime("%H:%M"),
+        "exclude": config.FISH_EXCLUDE_PCT, "buy_at": config.FISH_BUY_AT, "buy_max": config.FISH_BUY_MAX, "tp1_at": config.FISH_TP1_AT,
+        "tp1_ratio": config.FISH_TP1_RATIO, "tp2_at": config.FISH_TP2_AT, "max_buys": config.FISH_MAX_BUYS,
+        "cost": config.MOM_ROUNDTRIP_COST * 100,
+    }
+    d["fish_positions"] = s.get("fish_positions", {})
     d["break_positions"] = s.get("break_positions", {})
     bd = s.get("break_done") or {}
     d["break_done"] = bd.get("codes", []) if bd.get("date") == dt.date.today().isoformat() else []
@@ -168,7 +176,7 @@ def collect(kis, sched):
     d["fear"] = s.get("fear", {})
     jobs = {j.id: j for j in sched.get_jobs()}
     d["jobs"] = []
-    for fn, label, h, m in core.JOBS:
+    for fn, label, h, m, *_ in sorted(core.JOBS, key=lambda j: (j[2], j[3])):  # 시작 시각 순
         j = jobs.get(fn.__name__)
         nxt = j.next_run_time.strftime("%m-%d %H:%M") if j and j.next_run_time else "-"
         d["jobs"].append({"id": fn.__name__, "label": label, "time": f"{h:02d}:{m:02d}", "next": nxt})
@@ -179,6 +187,7 @@ def collect(kis, sched):
 MOM_CAND = {"t": 0.0, "data": None}
 SCALP_CAND = {"t": 0.0, "data": None}
 BREAK_CAND = {"t": 0.0, "data": None}
+FISH_CAND = {"t": 0.0, "data": None}
 
 
 def mom_candidates(kis, n=5):
@@ -317,6 +326,12 @@ def make_handler(kis, sched, allowed_hosts):
                         MOM_CAND["data"] = safe(lambda: mom_candidates(kis))
                     MOM_CAND["t"] = time.time()
                 return self._send(200, json.dumps(MOM_CAND["data"], ensure_ascii=False).encode())
+            if path == "/api/fish_candidates":
+                if time.time() - FISH_CAND["t"] > 30 or FISH_CAND["data"] is None:
+                    with LOCK:
+                        FISH_CAND["data"] = safe(lambda: fishing.candidates(kis))
+                    FISH_CAND["t"] = time.time()
+                return self._send(200, json.dumps(FISH_CAND["data"], ensure_ascii=False).encode())
             if path == "/api/break_candidates":
                 if time.time() - BREAK_CAND["t"] > 60 or BREAK_CAND["data"] is None:
                     with LOCK:
@@ -434,7 +449,7 @@ def make_handler(kis, sched, allowed_hosts):
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                     req = json.loads(self.rfile.read(min(n, 1024)) or b"{}")
-                    labels = {"fear": "공포지수", "box": "박스권", "momscalp": "모멘텀·단타(공용)", "break": "돌파매매"}
+                    labels = {"fear": "공포지수", "box": "박스권", "momscalp": "모멘텀·단타(공용)", "break": "돌파매매", "fish": "FISHING"}
                     with LOCK:
                         s = st.load()
                         if req.get("reset"):
@@ -474,7 +489,7 @@ def make_handler(kis, sched, allowed_hosts):
                         s.setdefault("enabled", {})[name] = on
                         st.save(s)
                         CACHE["t"] = 0.0
-                    label = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타", "break": "돌파매매"}[name]
+                    label = {"fear": "공포지수", "box": "박스권", "mom": "모멘텀", "scalp": "초단타", "break": "돌파매매", "fish": "FISHING"}[name]
                     log.warning("웹에서 전략 %s: %s (%s)", "ON" if on else "OFF", label, self.client_address[0])
                     notify.send(f"{'🟢' if on else '⏸'} {label} 전략 {'ON' if on else 'OFF (신규 매수 중지, 보유분 매도는 계속)'}")
                     return self._send(200, json.dumps({"name": name, "enabled": on}).encode())

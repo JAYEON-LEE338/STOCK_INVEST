@@ -12,6 +12,8 @@ log = logging.getLogger("fear")
 
 
 def run(kis: KIS) -> None:
+    if not (dt.time(9, 30) <= dt.datetime.now().time() < dt.time(15, 25)):
+        return  # 09:30~15:20 10분 간격 판단 (매수·매도 각각 하루 1회는 날짜 기록으로 보장)
     code = config.COVERED_CALL_CODE
     if not code:
         log.error("COVERED_CALL_CODE 가 설정되지 않았습니다 (.env)")
